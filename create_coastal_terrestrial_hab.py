@@ -2,10 +2,11 @@
 import sys
 import logging
 import os
-import urllib.request
 
+import ecoshard
 from osgeo import gdal
 from osgeo import ogr
+from osgeo import osr
 import pygeoprocessing
 import taskgraph
 
@@ -84,7 +85,7 @@ def main():
     buffer_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(BUFFER_VECTOR_URL))
     download_buffer_task = task_graph.add_task(
-        func=urllib.request.urlretrieve,
+        func=ecoshard.download_url,
         args=(BUFFER_VECTOR_URL, buffer_vector_path),
         target_path_list=[buffer_vector_path],
         task_name='download global_vector')
@@ -92,7 +93,7 @@ def main():
     lulc_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
     download_lulc_task = task_graph.add_task(
-        func=urllib.request.urlretrieve,
+        func=ecoshard.download_url,
         args=(LULC_RASTER_URL, lulc_raster_path),
         target_path_list=[lulc_raster_path],
         task_name='download lulc raster')
@@ -100,16 +101,16 @@ def main():
     shore_hab_raster_path = os.path.join(CHURN_DIR, 'shore_hab.tif')
     mask_shore_task = task_graph.add_task(
         func=make_mask,
-        args=((lulc_raster_path, 1), buffer_vector_path, shore_hab_raster_path),
+        args=(lulc_raster_path, buffer_vector_path, shore_hab_raster_path),
         target_path_list=[shore_hab_raster_path],
         dependent_task_list=[download_buffer_task, download_lulc_task],
         task_name='mask shore')
 
-    shore_hab_raster_path = os.path.join(WORKSPACE_DIR, 'shore_hab.gpkg')
+    shore_hab_vector_path = os.path.join(WORKSPACE_DIR, 'shore_hab.gpkg')
     polygonalize_task = task_graph.add_task(
         func=polygonalize_raster,
-        args=(shore_hab_raster_path, shore_hab_raster_path),
-        target_path_list=[shore_hab_raster_path],
+        args=(shore_hab_raster_path, shore_hab_vector_path),
+        target_path_list=[shore_hab_vector_path],
         dependent_task_list=[mask_shore_task],
         task_name='polygonalize shore hab')
 
@@ -119,15 +120,16 @@ def main():
 
 def polygonalize_raster(raster_path, target_vector_path):
     """Polygonalize `raster_path` to `target_vector_path` gpkg."""
-    raster = gdal.OpenEx(raster_path, gdal.OF_Raster)
+    raster = gdal.OpenEx(raster_path, gdal.OF_RASTER)
     band = raster.GetRasterBand(1)
     gpkg_driver = ogr.GetDriverByName('gpkg')
     vector = gpkg_driver.CreateDataSource(target_vector_path)
     layer_name = os.path.basename(os.path.splitext(target_vector_path)[0])
+    raster_srs = osr.SpatialReference(raster.GetProjection())
     target_layer = vector.CreateLayer(
-        layer_name, raster.GetProjection(), ogr.wkbPolygon)
+        layer_name, raster_srs, ogr.wkbPolygon)
     target_layer.CreateField(ogr.FieldDefn('pix_val', ogr.OFTInteger))
-    rasterize_callback = gdal._make_logger_callback(
+    rasterize_callback = pygeoprocessing._make_logger_callback(
         "polygonalizing %.1f%% complete")
     gdal.Polygonize(band, None, target_layer, 0, callback=rasterize_callback)
 
