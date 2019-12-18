@@ -105,7 +105,7 @@ if __name__ == '__main__':
         except OSError:
             pass
 
-    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, 0)
 
     lulc_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
@@ -154,15 +154,16 @@ if __name__ == '__main__':
                 reclass_map[lulc_code] = 0
 
         risk_distance_mask_path = os.path.join(
-            CHURN_DIR, '%s_mask.tif' % risk_distance_tuple)
+            CHURN_DIR, '%s_%s_mask.tif' % risk_distance_tuple)
 
         risk_distance_mask_task = task_graph.add_task(
-            func=pygeoprocessing.reclassify_raster(
+            func=pygeoprocessing.reclassify_raster,
+            args=(
                 (lulc_shore_mask_raster_path, 1), reclass_map,
                 risk_distance_mask_path, gdal.GDT_Byte, 0),
             target_path_list=[risk_distance_mask_path],
             dependent_task_list=[mask_lulc_by_shore_task],
-            task_name='map distance types %s' % risk_distance_tuple)
+            task_name='map distance types %s' % str(risk_distance_tuple))
 
     task_graph.join()
     task_graph.close()
