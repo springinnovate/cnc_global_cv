@@ -52,7 +52,9 @@ GLOBAL_WWIII_GZ_URL = (
 GLOBAL_DEM_URL = (
     ECOSHARD_BUCKET_URL +
     'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
-
+LS_POPULATION_URL = (
+    ECOSHARD_BUCKET_URL +
+    'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
 
 # This dictionary maps landcode id to (risk, dist) tuples
 LULC_CODE_TO_HAB_MAP = {
@@ -150,7 +152,7 @@ if __name__ == '__main__':
 
     for zip_url in [
             GLOBAL_GEOMORPHOLOGY_ZIP_URL, GLOBAL_REEFS_ZIP_URL,
-            GLOBAL_MANGROVES_ZIP_URL]:
+            GLOBAL_MANGROVES_ZIP_URL, LS_POPULATION_URL]:
         target_token_path = os.path.join(
             CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
         download_and_unzip_task = task_graph.add_task(
@@ -158,6 +160,8 @@ if __name__ == '__main__':
             args=(zip_url, ECOSHARD_DIR, target_token_path),
             target_path_list=[target_token_path],
             task_name='download and unzip %s' % zip_url)
+
+    ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
 
     global_dem_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_URL))
@@ -184,12 +188,12 @@ if __name__ == '__main__':
         target_path_list=[seagrass_vector_path],
         task_name='download seagrass task')
 
-    global_saltmarsh_path = os.path.join(
+    global_saltmarsh_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL))
     download_global_saltmarsh_task = task_graph.add_task(
         func=ecoshard.download_url,
-        args=(GLOBAL_SALTMARSH_URL, global_saltmarsh_path),
-        target_path_list=[global_saltmarsh_path],
+        args=(GLOBAL_SALTMARSH_URL, global_saltmarsh_vector_path),
+        target_path_list=[global_saltmarsh_vector_path],
         task_name='download global saltmarsh')
 
     mangroves_vector_path = os.path.join(
@@ -197,7 +201,7 @@ if __name__ == '__main__':
         'GMW_2016_v2.shp')
     reefs_vector_path = os.path.join(
         ECOSHARD_DIR, 'Reefs', 'reef_500_poly.shp')
-    GEOMORPHOLOGY_vector_path = os.path.join(ECOSHARD_DIR, 'Sediments.shp')
+    geomorphology_vector_path = os.path.join(ECOSHARD_DIR, 'Sediments.shp')
     lulc_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
 
@@ -258,3 +262,14 @@ if __name__ == '__main__':
 
     task_graph.join()
     task_graph.close()
+
+    for path in [
+            ls_population_raster_path,
+            geomorphology_vector_path,
+            reefs_vector_path,
+            mangroves_vector_path,
+            seagrass_vector_path,
+            global_saltmarsh_vector_path,
+            lulc_raster_path,
+            global_wwiii_vector_path]:
+        LOGGER.info('%s: %s' % (os.path.exists(path), path))
