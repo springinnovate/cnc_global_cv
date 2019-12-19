@@ -14,16 +14,27 @@ import zipfile
 
 import ecoshard
 from osgeo import gdal
+from osgeo import ogr
+from osgeo import osr
 import pygeoprocessing
+import shapely.geometry
+import shapely.wkb
+import shapely.strtree
 import taskgraph
 
 WORKING_DIR = "cnc_cv_workspace"
 ECOSHARD_DIR = os.path.join(WORKING_DIR, 'ecoshard')
 TARGET_NODATA = -1
 
+#[minx, miny, maxx, maxy].
+GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
+
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
-
+GLOBAL_POLYGON_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_global_polygon_simplified_geometries_'
+    'md5_653118dde775057e24de52542b01eaee.gpkg')
 GLOBAL_GEOMORPHOLOGY_ZIP_URL = (
     ECOSHARD_BUCKET_URL + 'SedType_md5_d670148183cc7f817e26570e77ca3449.zip')
 GLOBAL_REEFS_ZIP_URL = (
@@ -111,6 +122,8 @@ WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 
+SHORE_GRID_VECTOR_PATH = os.path.join(CHURN_DIR, 'shore_grid.gpkg')
+
 
 def download_and_unzip(url, target_dir, target_token_path):
     """Download `url` to `target_dir` and touch `target_token_path`."""
@@ -162,6 +175,14 @@ if __name__ == '__main__':
             task_name='download and unzip %s' % zip_url)
 
     ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
+
+    global_polygon_path = os.path.join(
+        ECOSHARD_DIR, os.path.basename(GLOBAL_POLYGON_URL))
+    download_global_polygon_path = task_graph.add_task(
+        func=ecoshard.download_url,
+        args=(GLOBAL_POLYGON_URL, global_polygon_path),
+        target_path_list=[global_polygon_path],
+        task_name='download %s' % global_polygon_path)
 
     global_dem_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_URL))
@@ -263,6 +284,49 @@ if __name__ == '__main__':
     task_graph.join()
     task_graph.close()
 
+    GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
+    land_geometry_list = []
+
+    global_polygon_vector = gdal.OpenEx(global_polygon_path, gdal.OF_VECTOR)
+    global_polygon_layer = global_polygon_vector.GetLayer()
+    feature_count = global_polygon_layer.GetFeatureCount()
+    for index, global_polygon_feature in enumerate(global_polygon_layer):
+        if index % 1000 == 0:
+            LOGGER.debug(
+                'adding %d of %d %.2f', index, feature_count,
+                100.0 * index / feature_count)
+        global_polygon_geom = global_polygon_feature.GetGeometryRef()
+        global_polygon_shapely = (
+            shapely.wkb.loads(global_polygon_geom.ExportToWkb()))
+        global_polygon_prep = shapely.prepared.prep(global_polygon_shapely)
+        global_polygon_shapely.prep = global_polygon_prep
+        land_geometry_list.append(global_polygon_shapely)
+
+    geometry_r_tree = shapely.strtree.STRtree(land_geometry_list)
+
+    gpkg_driver = ogr.GetDriverByName('GPKG')
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    shore_grid_vector = gpkg_driver.CreateDataSource(
+        SHORE_GRID_VECTOR_PATH)
+    shore_grid_layer = shore_grid_vector.CreateLayer(
+        os.path.splitext(os.path.basename(
+            SHORE_GRID_VECTOR_PATH))[0], wgs84_srs, ogr.wkbPolygon)
+    shore_grid_layer_defn = shore_grid_layer.GetLayerDefn()
+
+    for lng in range(GLOBAL_AOI_WGS84_BB[0], GLOBAL_AOI_WGS84_BB[2]):
+        for lat in range(GLOBAL_AOI_WGS84_BB[1], GLOBAL_AOI_WGS84_BB[3]):
+            sample_box = shapely.geometry.box(lng, lat, lng+1, lat+1)
+            intersection_list = geometry_r_tree.query(sample_box)
+            for intersection_geom in intersection_list:
+                if (intersection_geom.prep.intersects(sample_box) and
+                        not intersection_geom.prep.contains(sample_box)):
+                    LOGGER.debug('edge box: %s', str(sample_box))
+                    box_feature = ogr.Feature(shore_grid_layer_defn)
+                    sample_box_geom = ogr.CreateGeometryFromWkb(sample_box.wkb)
+                    box_feature.SetGeometry(sample_box_geom)
+                    shore_grid_layer.CreateFeature(box_feature)
+
     for path in [
             ls_population_raster_path,
             geomorphology_vector_path,
@@ -271,5 +335,6 @@ if __name__ == '__main__':
             seagrass_vector_path,
             global_saltmarsh_vector_path,
             lulc_raster_path,
-            global_wwiii_vector_path]:
+            global_wwiii_vector_path,
+            global_polygon_path]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
