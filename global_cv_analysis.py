@@ -57,6 +57,10 @@ LULC_RASTER_URL = (
 BUFFER_VECTOR_URL = (
     ECOSHARD_BUCKET_URL +
     'buffered_global_shore_5km_md5_a68e1049c1c03673add014cd29b7b368.gpkg')
+SHORE_GRIDS_URL = (
+    ECOSHARD_BUCKET_URL +
+    'shore_grid_md5_1a09b69c0c548d3b25d7e14c3ddb60c9.gpkg')
+
 GLOBAL_WWIII_GZ_URL = (
     ECOSHARD_BUCKET_URL +
     'wave_watch_iii_md5_c8bb1ce4739e0a27ee608303c217ab5b.gpkg.gz')
@@ -122,8 +126,6 @@ WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 
-SHORE_GRID_VECTOR_PATH = os.path.join(CHURN_DIR, 'shore_grid.gpkg')
-
 
 def download_and_unzip(url, target_dir, target_token_path):
     """Download `url` to `target_dir` and touch `target_token_path`."""
@@ -183,6 +185,15 @@ if __name__ == '__main__':
         args=(GLOBAL_POLYGON_URL, global_polygon_path),
         target_path_list=[global_polygon_path],
         task_name='download %s' % global_polygon_path)
+
+    shore_grid_vector_path = os.path.join(
+        ECOSHARD_DIR, os.path.basename(SHORE_GRIDS_URL))
+
+    download_global_polygon_path = task_graph.add_task(
+        func=ecoshard.download_url,
+        args=(SHORE_GRIDS_URL, shore_grid_vector_path),
+        target_path_list=[shore_grid_vector_path],
+        task_name='download %s' % shore_grid_vector_path)
 
     global_dem_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_URL))
@@ -284,71 +295,6 @@ if __name__ == '__main__':
     task_graph.join()
     task_graph.close()
 
-    GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
-    land_geometry_list = []
-
-    global_polygon_vector = gdal.OpenEx(global_polygon_path, gdal.OF_VECTOR)
-    global_polygon_layer = global_polygon_vector.GetLayer()
-    feature_count = global_polygon_layer.GetFeatureCount()
-    for index, global_polygon_feature in enumerate(global_polygon_layer):
-        if index % 1000 == 0:
-            LOGGER.debug(
-                'adding %d of %d %.2f', index, feature_count,
-                100.0 * index / feature_count)
-        global_polygon_geom = global_polygon_feature.GetGeometryRef()
-        global_polygon_shapely = (
-            shapely.wkb.loads(global_polygon_geom.ExportToWkb()))
-        global_polygon_prep = shapely.prepared.prep(global_polygon_shapely)
-        global_polygon_shapely.prep = global_polygon_prep
-        land_geometry_list.append(global_polygon_shapely)
-
-    ww_iii_point_list = []
-    ww_iii_polygon_vector = gdal.OpenEx(
-        global_wwiii_vector_path, gdal.OF_VECTOR)
-    ww_iii_polygon_layer = ww_iii_polygon_vector.GetLayer()
-    feature_count = ww_iii_polygon_layer.GetFeatureCount()
-    for index, ww_iii_polygon_feature in enumerate(ww_iii_polygon_layer):
-        if index % 1000 == 0:
-            LOGGER.debug(
-                'adding %d of %d %.2f', index, feature_count,
-                100.0 * index / feature_count)
-        ww_iii_polygon_geom = ww_iii_polygon_feature.GetGeometryRef()
-        ww_iii_polygon_shapely = (
-            shapely.wkb.loads(ww_iii_polygon_geom.ExportToWkb()))
-        ww_iii_polygon_prep = shapely.prepared.prep(ww_iii_polygon_shapely)
-        ww_iii_polygon_shapely.prep = ww_iii_polygon_prep
-        ww_iii_point_list.append(ww_iii_polygon_shapely)
-
-    geometry_r_tree = shapely.strtree.STRtree(land_geometry_list)
-    ww_iii_r_tree = shapely.strtree.STRtree(ww_iii_point_list)
-
-    gpkg_driver = ogr.GetDriverByName('GPKG')
-    wgs84_srs = osr.SpatialReference()
-    wgs84_srs.ImportFromEPSG(4326)
-    shore_grid_vector = gpkg_driver.CreateDataSource(
-        SHORE_GRID_VECTOR_PATH)
-    shore_grid_layer = shore_grid_vector.CreateLayer(
-        os.path.splitext(os.path.basename(
-            SHORE_GRID_VECTOR_PATH))[0], wgs84_srs, ogr.wkbPolygon)
-    shore_grid_layer_defn = shore_grid_layer.GetLayerDefn()
-
-    for lng in range(GLOBAL_AOI_WGS84_BB[0], GLOBAL_AOI_WGS84_BB[2]):
-        for lat in range(GLOBAL_AOI_WGS84_BB[1], GLOBAL_AOI_WGS84_BB[3]):
-            sample_box = shapely.geometry.box(lng, lat, lng+1, lat+1)
-            intersection_list = geometry_r_tree.query(sample_box)
-            point_list = ww_iii_r_tree.query(sample_box)
-            if not point_list:
-                continue
-            for intersection_geom in intersection_list:
-                if (intersection_geom.prep.intersects(sample_box) and
-                        not intersection_geom.prep.contains(sample_box)):
-                    LOGGER.debug('edge box: %s', str(sample_box))
-                    box_feature = ogr.Feature(shore_grid_layer_defn)
-                    sample_box_geom = ogr.CreateGeometryFromWkb(sample_box.wkb)
-                    box_feature.SetGeometry(sample_box_geom)
-                    shore_grid_layer.CreateFeature(box_feature)
-                    break
-
     for path in [
             ls_population_raster_path,
             geomorphology_vector_path,
@@ -358,5 +304,6 @@ if __name__ == '__main__':
             global_saltmarsh_vector_path,
             lulc_raster_path,
             global_wwiii_vector_path,
-            global_polygon_path]:
+            global_polygon_path,
+            shore_grid_vector_path]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
