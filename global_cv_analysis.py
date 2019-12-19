@@ -8,18 +8,15 @@ https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/
 import collections
 import gzip
 import logging
+import math
 import os
 import sys
 import zipfile
 
 import ecoshard
 from osgeo import gdal
-from osgeo import ogr
 from osgeo import osr
 import pygeoprocessing
-import shapely.geometry
-import shapely.wkb
-import shapely.strtree
 import taskgraph
 
 WORKING_DIR = "cnc_cv_workspace"
@@ -294,6 +291,22 @@ if __name__ == '__main__':
 
     task_graph.join()
     task_graph.close()
+
+    shore_grid_vector = gdal.OpenEx(shore_grid_vector_path, gdal.OF_VECTOR)
+    shore_grid_layer = shore_grid_vector.GetLayer()
+
+    for shore_grid_feature in shore_grid_layer:
+        shore_grid_geometry = shore_grid_feature.GetGeometryRef()
+        centroid = shore_grid_geometry.Centroid()
+        lng, lat = centroid.GetX(), centroid.GetY()
+
+        utm_code = (math.floor((lng + 180)/6) % 60) + 1
+        lat_code = 6 if lat > 0 else 7
+        epsg_code = int('32%d%02d' % (lat_code, utm_code))
+        utm_sr = osr.SpatialReference()
+        utm_sr.ImportFromEPSG(epsg_code)
+        LOGGER.debug('%s %s: %s', lng, lat, epsg_code)
+
 
     for path in [
             ls_population_raster_path,
