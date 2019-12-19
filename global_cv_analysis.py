@@ -6,9 +6,11 @@ https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/
 
 """
 import collections
+import gzip
 import logging
 import os
 import sys
+import zipfile
 
 import ecoshard
 from osgeo import gdal
@@ -22,11 +24,11 @@ TARGET_NODATA = -1
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
 
-GLOBAL_GEOMORPHOLOGY_URL = (
+GLOBAL_GEOMORPHOLOGY_ZIP_URL = (
     ECOSHARD_BUCKET_URL + 'SedType_md5_d670148183cc7f817e26570e77ca3449.zip')
-GLOBAL_REEFS_URL = (
+GLOBAL_REEFS_ZIP_URL = (
     ECOSHARD_BUCKET_URL + 'Reefs_md5_50b159fff92762ffa5efa0c611b436ce.zip')
-GLOBAL_MANGROVES_URL = (
+GLOBAL_MANGROVES_ZIP_URL = (
     ECOSHARD_BUCKET_URL +
     'GMW_001_GlobalMangroveWatch_2016-20191216T181028Z-001_'
     'md5_dd4b04fb9cac2314af99beed2b2c856a.zip')
@@ -40,6 +42,12 @@ LULC_RASTER_URL = (
 BUFFER_VECTOR_URL = (
     ECOSHARD_BUCKET_URL +
     'buffered_global_shore_5km_md5_a68e1049c1c03673add014cd29b7b368.gpkg')
+GLOBAL_WWIII_GZ_URL = (
+    ECOSHARD_BUCKET_URL +
+    'wave_watch_iii_md5_c8bb1ce4739e0a27ee608303c217ab5b.gpkg.gz')
+GLOBAL_DEM_URL = (
+    ECOSHARD_BUCKET_URL +
+    'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
 
 
 # This dictionary maps landcode id to (risk, dist) tuples
@@ -91,12 +99,41 @@ logging.basicConfig(
     format='%(asctime)s %(name)-10s %(levelname)-8s %(message)s',
     level=logging.DEBUG, datefmt='%m/%d/%Y %H:%M:%S ',
     stream=sys.stdout)
-LOGGER = logging.getLogger('taskgraph')
-LOGGER.setLevel(logging.DEBUG)
+LOGGER = logging.getLogger(__name__)
 
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
+
+
+def download_and_unzip(url, target_dir, target_token_path):
+    """Download `url` to `target_dir` and touch `target_token_path`."""
+    zipfile_path = os.path.join(target_dir, os.path.basename(url))
+    LOGGER.debug('url %s, zipfile_path: %s', url, zipfile_path)
+    ecoshard.download_url(url, zipfile_path)
+
+    with zipfile.ZipFile(zipfile_path, 'r') as zip_ref:
+        zip_ref.extractall(target_dir)
+
+    with open(target_token_path, 'w') as touchfile:
+        touchfile.write(f'unzipped {zipfile_path}')
+
+
+def download_and_ungzip(url, target_path, buffer_size=2**20):
+    """Download `url` to `target_dir` and touch `target_token_path`."""
+    gzipfile_path = os.path.join(
+        os.path.dirname(target_path), os.path.basename(url))
+    ecoshard.download_url(url, gzipfile_path)
+
+    with gzip.open(gzipfile_path, 'rb') as gzip_file:
+        with open(target_path, 'wb') as target_file:
+            while True:
+                content = gzip_file.read(buffer_size)
+                if content:
+                    target_file.write(content)
+                else:
+                    break
+
 
 if __name__ == '__main__':
     for dir_path in [WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR]:
@@ -105,7 +142,52 @@ if __name__ == '__main__':
         except OSError:
             pass
 
-    task_graph = taskgraph.TaskGraph(CHURN_DIR, 0)
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
+
+    for zip_url in [
+            GLOBAL_GEOMORPHOLOGY_ZIP_URL, GLOBAL_REEFS_ZIP_URL,
+            GLOBAL_MANGROVES_ZIP_URL]:
+        target_token_path = os.path.join(
+            CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
+        download_and_unzip_task = task_graph.add_task(
+            func=download_and_unzip,
+            args=(zip_url, ECOSHARD_DIR, target_token_path),
+            target_path_list=[target_token_path],
+            task_name='download and unzip %s' % zip_url)
+
+    GLOBAL_WWIII_GZ_URL
+
+    global_dem_path = os.path.join(
+        ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_URL))
+    download_global_dem_task = task_graph.add_task(
+        func=ecoshard.download_url,
+        args=(GLOBAL_DEM_URL, global_dem_path),
+        target_path_list=[global_dem_path],
+        task_name='download %s' % global_dem_path)
+
+    global_wwiii_vector_path = os.path.join(
+        ECOSHARD_DIR, os.path.basename(
+            os.path.splitext(GLOBAL_WWIII_GZ_URL)[0]))
+    download_and_ungzip_global_wwiii_task = task_graph.add_task(
+        func=download_and_ungzip,
+        args=(GLOBAL_WWIII_GZ_URL, global_wwiii_vector_path),
+        target_path_list=[global_wwiii_vector_path],
+        task_name='download %s' % global_wwiii_vector_path)
+
+    seagrass_vector_path = os.path.join(
+        ECOSHARD_DIR, os.path.basename(GLOBAL_SEAGRASS_URL))
+    download_task = task_graph.add_task(
+        func=ecoshard.download_url,
+        args=(GLOBAL_SEAGRASS_URL, seagrass_vector_path),
+        target_path_list=[seagrass_vector_path],
+        task_name='download seagrass task')
+
+    mangroves_vector_path = os.path.join(
+        ECOSHARD_DIR, 'GMW_001_GlobalMangroveWatch_2016', '01_Data',
+        'GMW_2016_v2.shp')
+    reefs_vector_path = os.path.join(
+        ECOSHARD_DIR, 'Reefs', 'reef_500_poly.shp')
+    GEOMORPHOLOGY_vector_path = os.path.join(ECOSHARD_DIR, 'Sediments.shp')
 
     lulc_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
