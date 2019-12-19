@@ -307,7 +307,6 @@ if __name__ == '__main__':
         utm_sr.ImportFromEPSG(epsg_code)
         LOGGER.debug('%s %s: %s', lng, lat, epsg_code)
 
-
     for path in [
             ls_population_raster_path,
             geomorphology_vector_path,
