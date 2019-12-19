@@ -35,6 +35,10 @@ GLOBAL_MANGROVES_ZIP_URL = (
 GLOBAL_SEAGRASS_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_seagrass_valid_md5_e206dde7cc9b95ba9846efa12b63d333.gpkg')
+GLOBAL_SALTMARSH_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_saltmarsh_valid_md5_56364edc15ab96d79b9fa08b12ec56ab.gpkg')
+
 LULC_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ESACCI-LC-L4-LCCS-Map-300m-P1Y-2015-v2.0.7_'
@@ -155,8 +159,6 @@ if __name__ == '__main__':
             target_path_list=[target_token_path],
             task_name='download and unzip %s' % zip_url)
 
-    GLOBAL_WWIII_GZ_URL
-
     global_dem_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_URL))
     download_global_dem_task = task_graph.add_task(
@@ -182,13 +184,20 @@ if __name__ == '__main__':
         target_path_list=[seagrass_vector_path],
         task_name='download seagrass task')
 
+    global_saltmarsh_path = os.path.join(
+        ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL))
+    download_global_saltmarsh_task = task_graph.add_task(
+        func=ecoshard.download_url,
+        args=(GLOBAL_SALTMARSH_URL, global_saltmarsh_path),
+        target_path_list=[global_saltmarsh_path],
+        task_name='download global saltmarsh')
+
     mangroves_vector_path = os.path.join(
         ECOSHARD_DIR, 'GMW_001_GlobalMangroveWatch_2016', '01_Data',
         'GMW_2016_v2.shp')
     reefs_vector_path = os.path.join(
         ECOSHARD_DIR, 'Reefs', 'reef_500_poly.shp')
     GEOMORPHOLOGY_vector_path = os.path.join(ECOSHARD_DIR, 'Sediments.shp')
-
     lulc_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
 
