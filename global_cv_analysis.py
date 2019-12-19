@@ -302,7 +302,25 @@ if __name__ == '__main__':
         global_polygon_shapely.prep = global_polygon_prep
         land_geometry_list.append(global_polygon_shapely)
 
+    ww_iii_point_list = []
+    ww_iii_polygon_vector = gdal.OpenEx(
+        global_wwiii_vector_path, gdal.OF_VECTOR)
+    ww_iii_polygon_layer = ww_iii_polygon_vector.GetLayer()
+    feature_count = ww_iii_polygon_layer.GetFeatureCount()
+    for index, ww_iii_polygon_feature in enumerate(ww_iii_polygon_layer):
+        if index % 1000 == 0:
+            LOGGER.debug(
+                'adding %d of %d %.2f', index, feature_count,
+                100.0 * index / feature_count)
+        ww_iii_polygon_geom = ww_iii_polygon_feature.GetGeometryRef()
+        ww_iii_polygon_shapely = (
+            shapely.wkb.loads(ww_iii_polygon_geom.ExportToWkb()))
+        ww_iii_polygon_prep = shapely.prepared.prep(ww_iii_polygon_shapely)
+        ww_iii_polygon_shapely.prep = ww_iii_polygon_prep
+        ww_iii_point_list.append(ww_iii_polygon_shapely)
+
     geometry_r_tree = shapely.strtree.STRtree(land_geometry_list)
+    ww_iii_r_tree = shapely.strtree.STRtree(ww_iii_point_list)
 
     gpkg_driver = ogr.GetDriverByName('GPKG')
     wgs84_srs = osr.SpatialReference()
@@ -318,6 +336,9 @@ if __name__ == '__main__':
         for lat in range(GLOBAL_AOI_WGS84_BB[1], GLOBAL_AOI_WGS84_BB[3]):
             sample_box = shapely.geometry.box(lng, lat, lng+1, lat+1)
             intersection_list = geometry_r_tree.query(sample_box)
+            point_list = ww_iii_r_tree.query(sample_box)
+            if not point_list:
+                continue
             for intersection_geom in intersection_list:
                 if (intersection_geom.prep.intersects(sample_box) and
                         not intersection_geom.prep.contains(sample_box)):
@@ -326,6 +347,7 @@ if __name__ == '__main__':
                     sample_box_geom = ogr.CreateGeometryFromWkb(sample_box.wkb)
                     box_feature.SetGeometry(sample_box_geom)
                     shore_grid_layer.CreateFeature(box_feature)
+                    break
 
     for path in [
             ls_population_raster_path,
