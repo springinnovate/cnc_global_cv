@@ -22,11 +22,14 @@ from osgeo import osr
 import pygeoprocessing
 import shapely.geometry
 import shapely.strtree
+import shapely.wkt
 import taskgraph
 
-WORKING_DIR = "cnc_cv_workspace"
-GRID_WORKSPACE_DIR = os.path.join(WORKING_DIR, 'grid_workspaces')
-ECOSHARD_DIR = os.path.join(WORKING_DIR, 'ecoshard')
+WORKSPACE_DIR = 'global_cv_workspace'
+CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
+ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
+GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'grid_workspaces')
+ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 TARGET_NODATA = -1
 
 #[minx, miny, maxx, maxy].
@@ -129,9 +132,6 @@ logging.basicConfig(
     stream=sys.stdout)
 LOGGER = logging.getLogger(__name__)
 
-WORKSPACE_DIR = 'global_cv_workspace'
-CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
-ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 STOP_SENTINEL = 'STOP'
 
 HABITAT_VECTOR_PATH_MAP = {
@@ -255,9 +255,12 @@ def cv_grid_worker(
     while True:
         payload = bb_work_queue.get()
         if payload == STOP_SENTINEL:
+            LOGGER.debug('stopping')
             # put it back so others can stop
             bb_work_queue.put(STOP_SENTINEL)
             break
+        else:
+            LOGGER.debug('running')
         # otherwise payload is the bounding box
         lng_min, lat_min, lng_max, lat_max = payload
         bounding_box = shapely.geometry.box(*payload)
@@ -266,50 +269,21 @@ def cv_grid_worker(
             GRID_WORKSPACE_DIR, '%s_%s_%s_%s' % payload)
 
         try:
-            os.path.makedirs(workspace_dir)
+            os.makedirs(workspace_dir)
         except OSError:
             pass
 
-        task_graph = taskgraph.TaskGraph(workspace_dir, -1)
+        # task_graph = taskgraph.TaskGraph(workspace_dir, -1)
 
-        lng_mid = (lng_min+lng_max)/2
-        lat_mid = (lat_min+lat_max)/2
-        utm_code = (math.floor((lng_mid+180)/6) % 60) + 1
-        lat_code = 6 if lat_mid > 0 else 7
-        epsg_code = int('32%d%02d' % (lat_code, utm_code))
-        utm_sr = osr.SpatialReference()
-        utm_sr.ImportFromEPSG(epsg_code)
-        LOGGER.debug(
-            '%s %s: %s', lng_mid, lat_mid,
-            epsg_code)
-
-        base_to_local = osr.CoordinateTransformation(
-            gegeomorphology_proj, utm_sr)
+        utm_srs = calculate_utm_srs((lng_min+lng_max)/2, (lat_min+lat_max)/2)
 
         ### geomorphology
         local_geomorphology_vector_path = os.path.join(
             workspace_dir, 'geomorphology.gpkg')
-        gpkg_driver = ogr.GetDriverByName("GPKG")
-        geomorphology_vector = gpkg_driver.CreateDataSource(
+        clip_geometry(
+            bounding_box, utm_srs,
+            ogr.wkbLineString, geomorphology_rtree, 'risk',
             local_geomorphology_vector_path)
-        geomorphology_layer = geomorphology_vector.CreateLayer(
-            os.path.splitext(os.path.basename(
-                local_geomorphology_vector_path))[0], utm_sr, ogr.wkbLine)
-        geomorphology_layer.CreateField(
-            ogr.FieldDefn('risk', ogr.OFTReal))
-        geomorphology_layer_defn = geomorphology_layer.GetLayerDefn()
-
-        for line in geomorphology_rtree.query(bounding_box):
-            clipped_line = bounding_box.intersection(line)
-            clipped_line_geom = ogr.CreateGeometryFromWkb(clipped_line.wkb)
-            error_code = clipped_line_geom.Transform(base_to_local)
-            if error_code:
-                raise RuntimeError(error_code)
-            geomorphology_feature = ogr.Feature(geomorphology_layer_defn)
-            geomorphology_feature.SetGeometry(clipped_line_geom.Clone())
-            geomorphology_feature.SetField('risk', line.field_val)
-
-
 
         # Rrelief
         # Rhab
@@ -317,6 +291,75 @@ def cv_grid_worker(
         # Rwind
         # Rwave
         # Rsurge
+
+
+def calculate_utm_srs(lng, lat):
+    """Calculate UTM SRS from the lng/lat point given.
+
+    Parameters:
+        lng (float): longitude point.
+        lat (float): latitude point.
+
+    Returns:
+        osr.SpatialReference in the UTM zone that contains the point (lng, lat)
+
+    """
+    utm_code = (math.floor((lng+180)/6) % 60) + 1
+    lat_code = 6 if lat > 0 else 7
+    epsg_code = int('32%d%02d' % (lat_code, utm_code))
+    utm_srs = osr.SpatialReference()
+    utm_srs.ImportFromEPSG(epsg_code)
+    return utm_srs
+
+
+def clip_geometry(
+        bounding_box, target_srs, ogr_geometry_type,
+        global_geom_rtree, target_field_name, target_vector_path):
+    """Clip geometry in `global_geom_rtree` to bounding box.
+
+    Parameters:
+        boudnging_box (shapely.Box): a shapely box in the same coordinate
+            system as the geometry in `global_geom_rtree`.
+        target_srs (osr.SpatialReference): target spatial reference for
+            creating the target vector.
+        ogr_geometry_type (ogr.wkb[TYPE]): geometry type to create for the
+            target vector.
+        global_geom_rtree (shapely.str_rtree): an rtree loaded with geometry
+            to query via bounding box. Each geometry will contain parameters
+            `field_val` and `prep` that have values to copy to
+            `target_field_name` and used to quickly query geometry.
+        target_field_name (str): field name to create in the target feature
+            that will contain the value of .field_val
+        target_vector_path (str): path to vector to create that will contain
+            locally projected geometry clipped to the given bounding box.
+
+    Returns:
+        None.
+
+    """
+    gpkg_driver = ogr.GetDriverByName("GPKG")
+    vector = gpkg_driver.CreateDataSource(
+        target_vector_path)
+    layer = vector.CreateLayer(
+        os.path.splitext(os.path.basename(target_vector_path))[0],
+        target_srs, ogr_geometry_type)
+    layer.CreateField(
+        ogr.FieldDefn(target_field_name, ogr.OFTReal))
+    layer_defn = layer.GetLayerDefn()
+
+    possible_geom_list = global_geom_rtree.query(bounding_box)
+    if not possible_geom_list:
+        raise ValueError('no data intersects this box')
+    for geom in possible_geom_list:
+        clipped_line = bounding_box.intersection(geom)
+        clipped_line_geom = ogr.CreateGeometryFromWkb(clipped_line.wkb)
+        error_code = clipped_line_geom.TransformTo(target_srs)
+        if error_code:
+            raise RuntimeError(error_code)
+        feature = ogr.Feature(layer_defn)
+        feature.SetGeometry(clipped_line_geom.Clone())
+        feature.SetField('risk', geom.field_val)
+        layer.CreateFeature(feature)
 
 
 if __name__ == '__main__':
@@ -430,6 +473,7 @@ if __name__ == '__main__':
         args=((lulc_raster_path, 1), shore_buffer_vector_path,
               lulc_shore_mask_raster_path),
         target_path_list=[lulc_shore_mask_raster_path],
+        ignore_path_list=[shore_buffer_vector_path],  # ignore mod by opening
         dependent_task_list=[download_buffer_task, download_lulc_task],
         task_name='mask shore')
 
@@ -498,6 +542,16 @@ if __name__ == '__main__':
             shore_grid_vector_path]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
 
+    shore_grid_vector = gdal.OpenEx(shore_grid_vector_path, gdal.OF_VECTOR)
+    shore_grid_layer = shore_grid_vector.GetLayer()
+
+    for shore_grid_feature in shore_grid_layer:
+        shore_grid_geom = shore_grid_feature.GetGeometryRef()
+        boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
+        LOGGER.debug(boundary_box.bounds)
+        bb_work_queue.put(boundary_box.bounds)
+
     bb_work_queue.put(STOP_SENTINEL)
     cv_grid_worker_thread.start()
     cv_grid_worker_thread.join()
+    LOGGER.debug('cv grid joined')
