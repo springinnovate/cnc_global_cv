@@ -21,6 +21,7 @@ from osgeo import ogr
 from osgeo import osr
 import pygeoprocessing
 import shapely.geometry
+import shapely.strtree
 import taskgraph
 
 WORKING_DIR = "cnc_cv_workspace"
@@ -202,7 +203,7 @@ def build_rtree(vector_path, field_to_copy=None):
     layer = vector.GetLayer()
     for feature in layer:
         feature_geom = feature.GetGeometryRef().Clone()
-        feature_geom_shapely = shapely.wkb.loads(feature_geom)
+        feature_geom_shapely = shapely.wkb.loads(feature_geom.ExportToWkb())
         feature_geom_shapely.prep = shapely.prepared.prep(feature_geom_shapely)
         feature_geom_shapely.geom = feature_geom
         if field_to_copy:
@@ -248,7 +249,7 @@ def cv_grid_worker(
     """
     geomorphology_rtree = build_rtree(geomorphology_vector_path, 'SEDTYPE')
     geomorphology_proj_wkt = pygeoprocessing.get_vector_info(
-        geomorphology_vector_path)
+        geomorphology_vector_path)['projection']
     gegeomorphology_proj = osr.SpatialReference()
     gegeomorphology_proj.ImportFromWkt(geomorphology_proj_wkt)
     while True:
@@ -340,7 +341,7 @@ if __name__ == '__main__':
             task_name='download and unzip %s' % zip_url)
 
     slr_raster_path = os.path.join(
-        ECOSHARD_BUCKET_URL, os.path.basename(SLR_RASTER_URL))
+        ECOSHARD_DIR, os.path.basename(SLR_RASTER_URL))
     download_global_polygon_path = task_graph.add_task(
         func=ecoshard.download_url,
         args=(SLR_RASTER_URL, slr_raster_path),
@@ -472,8 +473,8 @@ if __name__ == '__main__':
 
     bb_work_queue = multiprocessing.Queue()
 
-    cv_grid_worker_thread = threading.thread(
-        func=cv_grid_worker,
+    cv_grid_worker_thread = threading.Thread(
+        target=cv_grid_worker,
         args=(
             bb_work_queue,
             geomorphology_vector_path,
@@ -497,4 +498,6 @@ if __name__ == '__main__':
             shore_grid_vector_path]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
 
+    bb_work_queue.put(STOP_SENTINEL)
+    cv_grid_worker_thread.start()
     cv_grid_worker_thread.join()
