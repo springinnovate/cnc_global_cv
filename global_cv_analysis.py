@@ -9,17 +9,22 @@ import collections
 import gzip
 import logging
 import math
+import multiprocessing
 import os
 import sys
+import threading
 import zipfile
 
 import ecoshard
 from osgeo import gdal
+from osgeo import ogr
 from osgeo import osr
 import pygeoprocessing
+import shapely.geometry
 import taskgraph
 
 WORKING_DIR = "cnc_cv_workspace"
+GRID_WORKSPACE_DIR = os.path.join(WORKING_DIR, 'grid_workspaces')
 ECOSHARD_DIR = os.path.join(WORKING_DIR, 'ecoshard')
 TARGET_NODATA = -1
 
@@ -67,6 +72,10 @@ GLOBAL_DEM_URL = (
 LS_POPULATION_URL = (
     ECOSHARD_BUCKET_URL +
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
+SLR_RASTER_URL = (
+    ECOSHARD_BUCKET_URL +
+    'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
+    'md5_3072845759841d0b2523d00fe9518fee.tif')
 
 # This dictionary maps landcode id to (risk, dist) tuples
 LULC_CODE_TO_HAB_MAP = {
@@ -122,6 +131,25 @@ LOGGER = logging.getLogger(__name__)
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
+STOP_SENTINEL = 'STOP'
+
+HABITAT_VECTOR_PATH_MAP = {
+    'reefs': (
+        os.path.join(ECOSHARD_DIR, 'Reefs', 'reef_500_poly.shp'), 1, 2000.0),
+    'mangroves': (
+        os.path.join(
+            ECOSHARD_DIR, 'GMW_001_GlobalMangroveWatch_2016',
+            '01_Data', 'GMW_2016_v2.shp'), 1, 1000.0),
+    'saltmarsh': (
+        os.path.join(
+            ECOSHARD_DIR,
+            'ipbes-cv_saltmarsh_valid_'
+            'md5_56364edc15ab96d79b9fa08b12ec56ab.gpkg'), 2, 1000.0),
+    'seagrass': (
+        os.path.join(
+            ECOSHARD_DIR,
+            'ipbes-cv_seagrass_valid_'
+            'md5_e206dde7cc9b95ba9846efa12b63d333.gpkg'), 4, 500.0)}
 
 
 def download_and_unzip(url, target_dir, target_token_path):
@@ -153,8 +181,146 @@ def download_and_ungzip(url, target_path, buffer_size=2**20):
                     break
 
 
+def build_rtree(vector_path, field_to_copy=None):
+    """Build an rtree that generates geom and preped geometry.
+
+    Parameters:
+        vector_path (str): path to vector of geometry to build into
+            r tree.
+        field_to_copy (str): if not None, the value of this field per feature
+            will be copied into the .field_val parameter of each object in the
+            r-tree.
+
+    Returns:
+        strtree.STRtree object that will return shapely geometry objects
+            with a .prep field that is prepared geomtry for fast testing and
+            a .geom field that is the base gdal geometry.
+
+    """
+    geometry_prep_list = []
+    vector = gdal.OpenEx(vector_path, gdal.OF_VECTOR)
+    layer = vector.GetLayer()
+    for feature in layer:
+        feature_geom = feature.GetGeometryRef().Clone()
+        feature_geom_shapely = shapely.wkb.loads(feature_geom)
+        feature_geom_shapely.prep = shapely.prepared.prep(feature_geom_shapely)
+        feature_geom_shapely.geom = feature_geom
+        if field_to_copy:
+            feature_geom_shapely.field_val = feature.GetField(field_to_copy)
+        geometry_prep_list.append(feature_geom_shapely)
+    r_tree = shapely.strtree.STRtree(geometry_prep_list)
+    return r_tree
+
+
+# Rgeomorphology
+# Rrelief
+# Rhab
+# Rslr
+# Rwind
+# Rwave
+# Rsurge
+
+def cv_grid_worker(
+        bb_work_queue,
+        geomorphology_vector_path,
+        global_dem_raster_path,
+        habitat_vector_path_map,
+        habitat_raster_path_map,
+        slr_vector_path,
+        ww_iii_vector_path,
+        ):
+    """Worker process to calculate CV for a grid.
+
+    Parameters:
+        bb_work_queue (multiprocessing.Queue): contains
+            [minx, miny, maxx, maxy] bounding box values to be processed or
+            `STOP_SENTINEL` values to indicate the worker should be terminated.
+        habitat_vector_path_map (dict): maps a habitat id to a
+            (path, risk, dist(m)) tuple. These habitats should be used in the
+            calculation of Rhab.
+        habitat_raster_path_map (dict): mapt a habitat id to a
+            (raster path, risk, dist(m)) tuple. These are the raster versions
+            of habitats to use in Rhab.
+
+    Returns:
+        None.
+
+    """
+    geomorphology_rtree = build_rtree(geomorphology_vector_path, 'SEDTYPE')
+    geomorphology_proj_wkt = pygeoprocessing.get_vector_info(
+        geomorphology_vector_path)
+    gegeomorphology_proj = osr.SpatialReference()
+    gegeomorphology_proj.ImportFromWkt(geomorphology_proj_wkt)
+    while True:
+        payload = bb_work_queue.get()
+        if payload == STOP_SENTINEL:
+            # put it back so others can stop
+            bb_work_queue.put(STOP_SENTINEL)
+            break
+        # otherwise payload is the bounding box
+        lng_min, lat_min, lng_max, lat_max = payload
+        bounding_box = shapely.geometry.box(*payload)
+        # create workspace
+        workspace_dir = os.path.join(
+            GRID_WORKSPACE_DIR, '%s_%s_%s_%s' % payload)
+
+        try:
+            os.path.makedirs(workspace_dir)
+        except OSError:
+            pass
+
+        task_graph = taskgraph.TaskGraph(workspace_dir, -1)
+
+        lng_mid = (lng_min+lng_max)/2
+        lat_mid = (lat_min+lat_max)/2
+        utm_code = (math.floor((lng_mid+180)/6) % 60) + 1
+        lat_code = 6 if lat_mid > 0 else 7
+        epsg_code = int('32%d%02d' % (lat_code, utm_code))
+        utm_sr = osr.SpatialReference()
+        utm_sr.ImportFromEPSG(epsg_code)
+        LOGGER.debug(
+            '%s %s: %s', lng_mid, lat_mid,
+            epsg_code)
+
+        base_to_local = osr.CoordinateTransformation(
+            gegeomorphology_proj, utm_sr)
+
+        ### geomorphology
+        local_geomorphology_vector_path = os.path.join(
+            workspace_dir, 'geomorphology.gpkg')
+        gpkg_driver = ogr.GetDriverByName("GPKG")
+        geomorphology_vector = gpkg_driver.CreateDataSource(
+            local_geomorphology_vector_path)
+        geomorphology_layer = geomorphology_vector.CreateLayer(
+            os.path.splitext(os.path.basename(
+                local_geomorphology_vector_path))[0], utm_sr, ogr.wkbLine)
+        geomorphology_layer.CreateField(
+            ogr.FieldDefn('risk', ogr.OFTReal))
+        geomorphology_layer_defn = geomorphology_layer.GetLayerDefn()
+
+        for line in geomorphology_rtree.query(bounding_box):
+            clipped_line = bounding_box.intersection(line)
+            clipped_line_geom = ogr.CreateGeometryFromWkb(clipped_line.wkb)
+            error_code = clipped_line_geom.Transform(base_to_local)
+            if error_code:
+                raise RuntimeError(error_code)
+            geomorphology_feature = ogr.Feature(geomorphology_layer_defn)
+            geomorphology_feature.SetGeometry(clipped_line_geom.Clone())
+            geomorphology_feature.SetField('risk', line.field_val)
+
+
+
+        # Rrelief
+        # Rhab
+        # Rslr
+        # Rwind
+        # Rwave
+        # Rsurge
+
+
 if __name__ == '__main__':
-    for dir_path in [WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR]:
+    for dir_path in [
+            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
         try:
             os.makedirs(dir_path)
         except OSError:
@@ -172,6 +338,14 @@ if __name__ == '__main__':
             args=(zip_url, ECOSHARD_DIR, target_token_path),
             target_path_list=[target_token_path],
             task_name='download and unzip %s' % zip_url)
+
+    slr_raster_path = os.path.join(
+        ECOSHARD_BUCKET_URL, os.path.basename(SLR_RASTER_URL))
+    download_global_polygon_path = task_graph.add_task(
+        func=ecoshard.download_url,
+        args=(SLR_RASTER_URL, slr_raster_path),
+        target_path_list=[slr_raster_path],
+        task_name='download %s' % slr_raster_path)
 
     ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
 
@@ -266,7 +440,7 @@ if __name__ == '__main__':
 
     # this maps all the same type of codes together
     lulc_code_to_reclass_value = {}
-    risk_distance_path_map = {}
+    habitat_raster_risk_map = {}
     for risk_distance_tuple, lulc_code_list in sorted(
             risk_distance_to_lulc_code.items()):
         # reclassify landcover map to be ones everywhere for `lulc_code_list`
@@ -288,6 +462,7 @@ if __name__ == '__main__':
             target_path_list=[risk_distance_mask_path],
             dependent_task_list=[mask_lulc_by_shore_task],
             task_name='map distance types %s' % str(risk_distance_tuple))
+        habitat_raster_risk_map[risk_distance_tuple] = risk_distance_mask_path
 
     task_graph.join()
     task_graph.close()
@@ -295,17 +470,19 @@ if __name__ == '__main__':
     shore_grid_vector = gdal.OpenEx(shore_grid_vector_path, gdal.OF_VECTOR)
     shore_grid_layer = shore_grid_vector.GetLayer()
 
-    for shore_grid_feature in shore_grid_layer:
-        shore_grid_geometry = shore_grid_feature.GetGeometryRef()
-        centroid = shore_grid_geometry.Centroid()
-        lng, lat = centroid.GetX(), centroid.GetY()
+    bb_work_queue = multiprocessing.Queue()
 
-        utm_code = (math.floor((lng + 180)/6) % 60) + 1
-        lat_code = 6 if lat > 0 else 7
-        epsg_code = int('32%d%02d' % (lat_code, utm_code))
-        utm_sr = osr.SpatialReference()
-        utm_sr.ImportFromEPSG(epsg_code)
-        LOGGER.debug('%s %s: %s', lng, lat, epsg_code)
+    cv_grid_worker_thread = threading.thread(
+        func=cv_grid_worker,
+        args=(
+            bb_work_queue,
+            geomorphology_vector_path,
+            global_dem_path,
+            HABITAT_VECTOR_PATH_MAP,
+            habitat_raster_risk_map,
+            slr_raster_path,
+            global_wwiii_vector_path,
+            ))
 
     for path in [
             ls_population_raster_path,
@@ -319,3 +496,5 @@ if __name__ == '__main__':
             global_polygon_path,
             shore_grid_vector_path]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
+
+    cv_grid_worker_thread.join()
