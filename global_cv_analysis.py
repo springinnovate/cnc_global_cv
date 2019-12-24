@@ -262,11 +262,13 @@ def cv_grid_worker(
         else:
             LOGGER.debug('running')
         # otherwise payload is the bounding box
-        lng_min, lat_min, lng_max, lat_max = payload
-        bounding_box = shapely.geometry.box(*payload)
+        index, (lng_min, lat_min, lng_max, lat_max) = payload
+        bounding_box = shapely.geometry.box(
+            lng_min, lat_min, lng_max, lat_max)
         # create workspace
         workspace_dir = os.path.join(
-            GRID_WORKSPACE_DIR, '%s_%s_%s_%s' % payload)
+            GRID_WORKSPACE_DIR, '%d_%s_%s_%s_%s' % (
+                index, lng_min, lat_min, lng_max, lat_max))
 
         try:
             os.makedirs(workspace_dir)
@@ -276,21 +278,25 @@ def cv_grid_worker(
         # task_graph = taskgraph.TaskGraph(workspace_dir, -1)
 
         utm_srs = calculate_utm_srs((lng_min+lng_max)/2, (lat_min+lat_max)/2)
+        wgs84_srs = osr.SpatialReference()
+        wgs84_srs.ImportFromEPSG(4326)
+        try:
+            ### geomorphology
+            local_geomorphology_vector_path = os.path.join(
+                workspace_dir, 'geomorphology.gpkg')
+            clip_geometry(
+                bounding_box, wgs84_srs, utm_srs,
+                ogr.wkbMultiLineString, geomorphology_rtree, 'risk',
+                local_geomorphology_vector_path)
 
-        ### geomorphology
-        local_geomorphology_vector_path = os.path.join(
-            workspace_dir, 'geomorphology.gpkg')
-        clip_geometry(
-            bounding_box, utm_srs,
-            ogr.wkbLineString, geomorphology_rtree, 'risk',
-            local_geomorphology_vector_path)
-
-        # Rrelief
-        # Rhab
-        # Rslr
-        # Rwind
-        # Rwave
-        # Rsurge
+            # Rrelief
+            # Rhab
+            # Rslr
+            # Rwind
+            # Rwave
+            # Rsurge
+        except Exception:
+            LOGGER.exception('error on %s', payload)
 
 
 def calculate_utm_srs(lng, lat):
@@ -313,7 +319,7 @@ def calculate_utm_srs(lng, lat):
 
 
 def clip_geometry(
-        bounding_box, target_srs, ogr_geometry_type,
+        bounding_box, base_srs, target_srs, ogr_geometry_type,
         global_geom_rtree, target_field_name, target_vector_path):
     """Clip geometry in `global_geom_rtree` to bounding box.
 
@@ -346,6 +352,8 @@ def clip_geometry(
     layer.CreateField(
         ogr.FieldDefn(target_field_name, ogr.OFTReal))
     layer_defn = layer.GetLayerDefn()
+    base_to_target_transform = osr.CoordinateTransformation(
+        base_srs, target_srs)
 
     possible_geom_list = global_geom_rtree.query(bounding_box)
     if not possible_geom_list:
@@ -353,7 +361,7 @@ def clip_geometry(
     for geom in possible_geom_list:
         clipped_line = bounding_box.intersection(geom)
         clipped_line_geom = ogr.CreateGeometryFromWkb(clipped_line.wkb)
-        error_code = clipped_line_geom.TransformTo(target_srs)
+        error_code = clipped_line_geom.Transform(base_to_target_transform)
         if error_code:
             raise RuntimeError(error_code)
         feature = ogr.Feature(layer_defn)
@@ -545,11 +553,13 @@ if __name__ == '__main__':
     shore_grid_vector = gdal.OpenEx(shore_grid_vector_path, gdal.OF_VECTOR)
     shore_grid_layer = shore_grid_vector.GetLayer()
 
-    for shore_grid_feature in shore_grid_layer:
+    for index, shore_grid_feature in enumerate(shore_grid_layer):
         shore_grid_geom = shore_grid_feature.GetGeometryRef()
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
-        bb_work_queue.put(boundary_box.bounds)
+        bb_work_queue.put((index, boundary_box.bounds))
+        if index > 10:
+            break
 
     bb_work_queue.put(STOP_SENTINEL)
     cv_grid_worker_thread.start()
