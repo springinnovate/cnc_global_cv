@@ -225,10 +225,10 @@ def cv_grid_worker(
         bb_work_queue,
         geomorphology_vector_path,
         global_dem_raster_path,
+        slr_raster_path,
+        wwiii_vector_path,
         habitat_vector_path_map,
         habitat_raster_path_map,
-        slr_vector_path,
-        ww_iii_vector_path,
         ):
     """Worker process to calculate CV for a grid.
 
@@ -236,6 +236,12 @@ def cv_grid_worker(
         bb_work_queue (multiprocessing.Queue): contains
             [minx, miny, maxx, maxy] bounding box values to be processed or
             `STOP_SENTINEL` values to indicate the worker should be terminated.
+        geomorphology_vector_path (str): path to line geometry geomorphology
+            layer that has a field called 'SEDTYPE'
+        global_dem_raster_path (str): path to a global dem raster.
+        slr_raster_path (str): path to a sea level rise raster.
+        wwiii_vector_path (str): path to wave watch III dataset that has
+            fields TODO FILL IN WHAT THEY ARE
         habitat_vector_path_map (dict): maps a habitat id to a
             (path, risk, dist(m)) tuple. These habitats should be used in the
             calculation of Rhab.
@@ -281,7 +287,9 @@ def cv_grid_worker(
         wgs84_srs = osr.SpatialReference()
         wgs84_srs.ImportFromEPSG(4326)
         try:
-            ### geomorphology
+            # clip_geometry(
+            #     bounding_box, base_srs, target_srs, ogr_geometry_type,
+            #     global_geom_rtree, target_field_name, target_vector_path)
             local_geomorphology_vector_path = os.path.join(
                 workspace_dir, 'geomorphology.gpkg')
             clip_geometry(
@@ -324,7 +332,7 @@ def clip_geometry(
     """Clip geometry in `global_geom_rtree` to bounding box.
 
     Parameters:
-        boudnging_box (shapely.Box): a shapely box in the same coordinate
+        bounding_box (shapely.Box): a shapely box in the same coordinate
             system as the geometry in `global_geom_rtree`.
         target_srs (osr.SpatialReference): target spatial reference for
             creating the target vector.
@@ -530,11 +538,11 @@ if __name__ == '__main__':
         args=(
             bb_work_queue,
             geomorphology_vector_path,
+            slr_raster_path,
             global_dem_path,
+            global_wwiii_vector_path,
             HABITAT_VECTOR_PATH_MAP,
             habitat_raster_risk_map,
-            slr_raster_path,
-            global_wwiii_vector_path,
             ))
 
     for path in [
