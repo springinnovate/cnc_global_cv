@@ -13,6 +13,7 @@ import multiprocessing
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import zipfile
 
@@ -20,6 +21,7 @@ import ecoshard
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
+import numpy
 import pygeoprocessing
 import retrying
 import shapely.geometry
@@ -311,7 +313,11 @@ def cv_grid_worker(
             sample_line_to_points(
                 local_geomorphology_vector_path, shore_point_vector_path,
                 SHORE_POINT_SAMPLE_DISTANCE)
-            LOGGER.debug('valid geomorphology, exiting for debugging purposes')
+
+            calculate_relief(
+                shore_point_vector_path, local_dem_path, 'Rrelief')
+
+            LOGGER.debug('exiting for debugging purposes')
             sys.exit(0)
 
             # Rrelief
@@ -458,134 +464,61 @@ def sample_line_to_points(
 
 
 def calculate_relief(
-        base_shore_point_vector_path, global_dem_path, workspace_dir,
-        target_relief_point_vector_path):
+        shore_point_vector_path, dem_path, target_field_name):
     """Calculate DEM relief as average coastal land area within 5km.
 
     Parameters:
-        base_shore_point_vector_path (string):  path to a point shapefile to
+        shore_point_vector_path (string):  path to a point shapefile to
             for relief point analysis.
-        global_dem_path (string): path to a DEM raster projected in wgs84.
-        workspace_dir (string): path to a directory to make local calculations
-            in
-        target_relief_point_vector_path (string): path to output vector.
-            after completion will a value for average relief within 5km in
-            a field called 'relief'.
+        dem_path (string): path to a DEM raster projected in local coordinates.
+        target_field_name (string): this field name will be added to
+            `shore_point_vector_path` and filled with Relief values.
 
     Returns:
         None.
 
     """
     try:
-        if not os.path.exists(os.path.dirname(
-                target_relief_point_vector_path)):
-            os.makedirs(
-                os.path.dirname(target_relief_point_vector_path))
-        if not os.path.exists(workspace_dir):
-            os.makedirs(workspace_dir)
-        if os.path.exists(target_relief_point_vector_path):
-            os.remove(target_relief_point_vector_path)
-
-        base_ref_wkt = pygeoprocessing.get_vector_info(
-            base_shore_point_vector_path)['projection']
-        base_spatial_reference = osr.SpatialReference()
-        base_spatial_reference.ImportFromWkt(base_ref_wkt)
-
-        # reproject base_shore_point_vector_path to utm coordinates
-        base_shore_info = pygeoprocessing.get_vector_info(
-            base_shore_point_vector_path)
-        base_shore_bounding_box = base_shore_info['bounding_box']
-
-        utm_spatial_reference = get_utm_spatial_reference(
-            base_shore_info['bounding_box'])
-        base_spatial_reference = osr.SpatialReference()
-        base_spatial_reference.ImportFromWkt(base_shore_info['projection'])
-
-        pygeoprocessing.reproject_vector(
-            base_shore_point_vector_path, utm_spatial_reference.ExportToWkt(),
-            target_relief_point_vector_path, driver_name='GPKG')
-
-        utm_bounding_box = pygeoprocessing.get_vector_info(
-            target_relief_point_vector_path)['bounding_box']
-
-        target_relief_point_vector = ogr.Open(
-            target_relief_point_vector_path, 1)
-        target_relief_point_layer = target_relief_point_vector.GetLayer()
-
+        shore_point_vector = gdal.OpenEx(
+            shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
+        shore_point_layer = shore_point_vector.GetLayer()
         relief_field = ogr.FieldDefn('relief', ogr.OFTReal)
         relief_field.SetPrecision(5)
         relief_field.SetWidth(24)
-        target_relief_point_layer.CreateField(relief_field)
-        target_relief_point_layer.CreateField(ogr.FieldDefn(
-            'id', ogr.OFTInteger))
-        for target_feature in target_relief_point_layer:
-            target_feature.SetField('id', target_feature.GetFID())
-            target_relief_point_layer.SetFeature(target_feature)
+        shore_point_layer.CreateField(relief_field)
+        dem_info = pygeoprocessing.get_raster_info(dem_path)
 
-        # extend bounding box for max fetch distance
-        utm_bounding_box = [
-            utm_bounding_box[0] - _MAX_FETCH_DISTANCE,
-            utm_bounding_box[1] - _MAX_FETCH_DISTANCE,
-            utm_bounding_box[2] + _MAX_FETCH_DISTANCE,
-            utm_bounding_box[3] + _MAX_FETCH_DISTANCE]
+        tmp_working_dir = tempfile.mkdtemp(
+            dir=os.path.dirname(shore_point_vector_path))
 
-        # get lat/lng bounding box of utm projected coordinates
-
-        # get global polygon clip of that utm box
-        # transform local box back to lat/lng -> global clipping box
-        lat_lng_clipping_box = pygeoprocessing.transform_bounding_box(
-            utm_bounding_box, utm_spatial_reference.ExportToWkt(),
-            base_spatial_reference.ExportToWkt(), edge_samples=11)
-        if (base_shore_bounding_box[0] > 0 and
-                lat_lng_clipping_box[0] > lat_lng_clipping_box[2]):
-            lat_lng_clipping_box[2] += 360
-        elif (base_shore_bounding_box[0] < 0 and
-              lat_lng_clipping_box[0] > lat_lng_clipping_box[2]):
-            lat_lng_clipping_box[0] -= 360
-        elif base_shore_bounding_box == [0, 0, 0, 0]:
-            # this case guards for an empty shore point in case there are
-            # very tiny islands or such
-            lat_lng_clipping_box = (0, 0, 0, 0)
-
-        clipped_lat_lng_dem_path = os.path.join(
-            workspace_dir, 'clipped_lat_lng_dem.tif')
-
-        target_pixel_size = pygeoprocessing.get_raster_info(
-            global_dem_path)['pixel_size']
-        pygeoprocessing.warp_raster(
-            global_dem_path, target_pixel_size, clipped_lat_lng_dem_path,
-            'bilinear', target_bb=lat_lng_clipping_box)
-        clipped_utm_dem_path = os.path.join(
-            workspace_dir, 'clipped_utm_dem.tif')
-        target_pixel_size = (
-            _SMALLEST_FEATURE_SIZE / 2.0, -_SMALLEST_FEATURE_SIZE / 2.0)
-        pygeoprocessing.warp_raster(
-            clipped_lat_lng_dem_path, target_pixel_size, clipped_utm_dem_path,
-            'bilinear', target_sr_wkt=utm_spatial_reference.ExportToWkt())
-        # mask out all DEM < 0 to 0
-        nodata = pygeoprocessing.get_raster_info(
-            clipped_utm_dem_path)['nodata'][0]
+        dem_nodata = dem_info['nodata'][0]
 
         def zero_negative_values(depth_array):
-            valid_mask = depth_array != nodata
-            result_array = numpy.empty(
-                depth_array.shape, dtype=numpy.int16)
-            result_array[:] = nodata
+            valid_mask = depth_array != dem_nodata
+            result_array = numpy.empty_like(depth_array)
+            result_array[:] = dem_nodata
             result_array[valid_mask] = 0
             result_array[depth_array > 0] = depth_array[depth_array > 0]
             return result_array
 
         positive_dem_path = os.path.join(
-            workspace_dir, 'positive_dem.tif')
+            tmp_working_dir, 'positive_dem.tif')
 
         pygeoprocessing.raster_calculator(
-            [(clipped_utm_dem_path, 1)], zero_negative_values,
-            positive_dem_path, gdal.GDT_Int16, nodata)
+            [(dem_path, 1)], zero_negative_values,
+            positive_dem_path, gdal.GDT_Int16, dem_nodata)
 
         # convolve over a 5km radius
-        radius_in_pixels = 5000.0 / target_pixel_size[0]
-        kernel_filepath = os.path.join(workspace_dir, 'averaging_kernel.tif')
-        create_averaging_kernel_raster(radius_in_pixels, kernel_filepath)
+        dem_pixel_size = dem_info['pixel_size']
+        kernel_radius = (
+            abs(5000.0 // dem_pixel_size[0]),
+            abs(5000.0 // dem_pixel_size[1]))
+
+        kernel_filepath = os.path.join(
+            tmp_working_dir, 'averaging_kernel.tif')
+        create_averaging_kernel_raster(kernel_radius, kernel_filepath)
+
+        return
 
         relief_path = os.path.join(workspace_dir, 'relief.tif')
         pygeoprocessing.convolve_2d(
@@ -595,8 +528,8 @@ def calculate_relief(
         relief_band = relief_raster.GetRasterBand(1)
         n_rows = relief_band.YSize
         relief_geotransform = relief_raster.GetGeoTransform()
-        target_relief_point_layer.ResetReading()
-        for point_feature in target_relief_point_layer:
+        shore_point_layer.ResetReading()
+        for point_feature in shore_point_layer:
             point_geometry = point_feature.GetGeometryRef()
             point_x, point_y = point_geometry.GetX(), point_geometry.GetY()
             point_geometry = None
@@ -620,14 +553,14 @@ def calculate_relief(
             # Make relief "negative" so when we histogram it for risk a
             # "higher" value will show a lower risk.
             point_feature.SetField('relief', -float(pixel_value))
-            target_relief_point_layer.SetFeature(point_feature)
+            shore_point_layer.SetFeature(point_feature)
 
-        target_relief_point_layer.SyncToDisk()
-        target_relief_point_layer = None
-        target_relief_point_vector = None
+        shore_point_layer.SyncToDisk()
+        shore_point_layer = None
+        shore_point_vector = None
 
     except Exception:
-        traceback.print_exc()
+        LOGGER.exception('error in relief calc')
         raise
 
 
@@ -715,6 +648,54 @@ def estimate_projected_pixel_size(
     LOGGER.debug(pixel_bb)
     LOGGER.debug(estimated_pixel_size)
     return estimated_pixel_size
+
+
+def create_averaging_kernel_raster(radius_in_pixels, kernel_filepath):
+    """Create a flat raster kernel with a 2d radius given.
+
+    Parameters:
+        radius_in_pixels (tuple): the (x/y) distance of the averaging kernel.
+        kernel_filepath (string): The path to the file on disk where this
+            kernel should be stored.  If this file exists, it will be
+            overwritten.
+
+    Returns:
+        None
+
+    """
+    driver = gdal.GetDriverByName('GTiff')
+    LOGGER.debug(radius_in_pixels)
+    kernel_raster = driver.Create(
+        kernel_filepath, int(2*radius_in_pixels[0]),
+        int(2*radius_in_pixels[1]), 1, gdal.GDT_Float32)
+
+    # Make some kind of geotransform, it doesn't matter what but
+    # will make GIS libraries behave better if it's all defined
+    kernel_raster.SetGeoTransform([1, 0.1, 0, 1, 0, -0.1])
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    kernel_raster.SetProjection(srs.ExportToWkt())
+
+    kernel_band = kernel_raster.GetRasterBand(1)
+    kernel_band.SetNoDataValue(-9999)
+
+    n_cols = kernel_raster.RasterXSize
+    n_rows = kernel_raster.RasterYSize
+    iv, jv = numpy.meshgrid(range(n_rows), range(n_cols), indexing='ij')
+
+    cx = n_cols / 2.0
+    cy = n_rows / 2.0
+
+    kernel_array = numpy.where(
+        (cx-jv)**2 / radius_in_pixels[0] +
+        (cy-iv)**2 / radius_in_pixels[1] <= 1.0, 1.0, 0.0)
+    LOGGER.debug(kernel_array)
+
+    # normalize
+    kernel_array /= numpy.sum(kernel_array)
+    kernel_band.WriteArray(kernel_array)
+    kernel_band = None
+    kernel_raster = None
 
 
 if __name__ == '__main__':
