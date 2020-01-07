@@ -482,7 +482,7 @@ def calculate_relief(
         shore_point_vector = gdal.OpenEx(
             shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
         shore_point_layer = shore_point_vector.GetLayer()
-        relief_field = ogr.FieldDefn('relief', ogr.OFTReal)
+        relief_field = ogr.FieldDefn(target_field_name, ogr.OFTReal)
         relief_field.SetPrecision(5)
         relief_field.SetWidth(24)
         shore_point_layer.CreateField(relief_field)
@@ -518,46 +518,46 @@ def calculate_relief(
             tmp_working_dir, 'averaging_kernel.tif')
         create_averaging_kernel_raster(kernel_radius, kernel_filepath)
 
-        return
-
-        relief_path = os.path.join(workspace_dir, 'relief.tif')
+        relief_path = os.path.join(tmp_working_dir, 'relief.tif')
         pygeoprocessing.convolve_2d(
             (positive_dem_path, 1), (kernel_filepath, 1), relief_path)
-
         relief_raster = gdal.Open(relief_path)
         relief_band = relief_raster.GetRasterBand(1)
-        n_rows = relief_band.YSize
-        relief_geotransform = relief_raster.GetGeoTransform()
+
+        inv_gt = gdal.InvGeoTransform(dem_info['geotransform'])
+
         shore_point_layer.ResetReading()
         for point_feature in shore_point_layer:
             point_geometry = point_feature.GetGeometryRef()
             point_x, point_y = point_geometry.GetX(), point_geometry.GetY()
             point_geometry = None
 
-            pixel_x = int(
-                (point_x - relief_geotransform[0]) / relief_geotransform[1])
-            pixel_y = int(
-                (point_y - relief_geotransform[3]) / relief_geotransform[5])
+            pixel_x, pixel_y = [
+                int(x) for x in
+                gdal.ApplyGeoTransform(inv_gt, point_x, point_y)]
 
-            if pixel_y >= n_rows:
-                pixel_y = n_rows - 1
             try:
                 pixel_value = relief_band.ReadAsArray(
                     xoff=pixel_x, yoff=pixel_y, win_xsize=1,
                     win_ysize=1)[0, 0]
             except Exception:
-                LOGGER.error(
+                LOGGER.exception(
                     'relief_band size %d %d', relief_band.XSize,
                     relief_band.YSize)
                 raise
             # Make relief "negative" so when we histogram it for risk a
             # "higher" value will show a lower risk.
-            point_feature.SetField('relief', -float(pixel_value))
+            point_feature.SetField(target_field_name, -float(pixel_value))
             shore_point_layer.SetFeature(point_feature)
 
         shore_point_layer.SyncToDisk()
         shore_point_layer = None
         shore_point_vector = None
+
+        try:
+            shutil.rmtree(tmp_working_dir)
+        except OSError:
+            LOGGER.warning('unable to rm %s' % tmp_working_dir)
 
     except Exception:
         LOGGER.exception('error in relief calc')
