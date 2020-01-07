@@ -11,6 +11,7 @@ import logging
 import math
 import multiprocessing
 import os
+import shutil
 import sys
 import threading
 import zipfile
@@ -20,6 +21,7 @@ from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
 import pygeoprocessing
+import retrying
 import shapely.geometry
 import shapely.strtree
 import shapely.wkt
@@ -34,6 +36,7 @@ TARGET_NODATA = -1
 
 #[minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
+SHORE_POINT_SAMPLE_DISTANCE = 2000.0
 
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
@@ -286,6 +289,9 @@ def cv_grid_worker(
         utm_srs = calculate_utm_srs((lng_min+lng_max)/2, (lat_min+lat_max)/2)
         wgs84_srs = osr.SpatialReference()
         wgs84_srs.ImportFromEPSG(4326)
+
+        missing_data = False
+
         try:
             # clip_geometry(
             #     bounding_box, base_srs, target_srs, ogr_geometry_type,
@@ -296,6 +302,13 @@ def cv_grid_worker(
                 bounding_box, wgs84_srs, utm_srs,
                 ogr.wkbMultiLineString, geomorphology_rtree, 'risk',
                 local_geomorphology_vector_path)
+            shore_point_vector_path = os.path.join(
+                workspace_dir, 'shore_points.gpkg')
+            sample_line_to_points(
+                local_geomorphology_vector_path, shore_point_vector_path,
+                SHORE_POINT_SAMPLE_DISTANCE)
+            LOGGER.debug('valid geomorphology, exiting for debugging purposes')
+            sys.exit(0)
 
             # Rrelief
             # Rhab
@@ -305,6 +318,20 @@ def cv_grid_worker(
             # Rsurge
         except Exception:
             LOGGER.exception('error on %s', payload)
+            LOGGER.warning('missing data, removing workspace')
+            retrying_rmtree(workspace_dir)
+
+
+@retrying.retry(
+    wait_exponential_multiplier=1000, wait_exponential_max=10000,
+    stop_max_attempt_number=5)
+def retrying_rmtree(dir_path):
+    """Remove `dir_path` but try a few times."""
+    try:
+        shutil.rmtree(dir_path)
+    except Exception:
+        LOGGER.exception('unable to remove %s' % dir_path)
+        raise
 
 
 def calculate_utm_srs(lng, lat):
@@ -365,6 +392,8 @@ def clip_geometry(
 
     possible_geom_list = global_geom_rtree.query(bounding_box)
     if not possible_geom_list:
+        layer = None
+        vector = None
         raise ValueError('no data intersects this box')
     for geom in possible_geom_list:
         clipped_line = bounding_box.intersection(geom)
@@ -376,6 +405,50 @@ def clip_geometry(
         feature.SetGeometry(clipped_line_geom.Clone())
         feature.SetField('risk', geom.field_val)
         layer.CreateFeature(feature)
+
+
+def sample_line_to_points(
+        line_vector_path, target_point_path, point_step_size):
+    """Sample lines in line vector to points along the path.
+
+    Parameters:
+        line_vector_path (str): path to line based vector.
+        target_point_path (str): created by this function. A GPKG that is in
+            the same projection as `line_vector` where points lie on those line
+            segments spaced no less than `point_step_size` apart.
+        point_step_size (float): step size in projected units of `line_vector`
+            for points to drop along the line segments.
+
+    Returns:
+        None.
+
+    """
+    line_vector = gdal.OpenEx(line_vector_path)
+    line_layer = line_vector.GetLayer()
+
+    gpkg_driver = ogr.GetDriverByName('GPKG')
+    if os.path.exists(target_point_path):
+        os.remove(target_point_path)
+    point_vector = gpkg_driver.CreateDataSource(target_point_path)
+    point_layer = point_vector.CreateLayer(
+        'points', line_layer.GetSpatialRef(), ogr.wkbPoint, ['OVERWRITE=YES'])
+    point_defn = point_layer.GetLayerDefn()
+    for feature in line_layer:
+        current_distance = 0.0
+        line_geom = feature.GetGeometryRef()
+        line = shapely.wkb.loads(line_geom.ExportToWkb())
+        while current_distance < line.length:
+            new_point = line.interpolate(current_distance)
+            current_distance += point_step_size
+            new_point_feature = ogr.Feature(point_defn)
+            new_point_geom = ogr.CreateGeometryFromWkb(new_point.wkb)
+            new_point_feature.SetGeometry(new_point_geom)
+            point_layer.CreateFeature(new_point_feature)
+
+    point_layer = None
+    point_vector = None
+    line_layer = None
+    line_vector = None
 
 
 if __name__ == '__main__':
