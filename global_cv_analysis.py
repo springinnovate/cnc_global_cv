@@ -37,6 +37,7 @@ TARGET_NODATA = -1
 #[minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
 SHORE_POINT_SAMPLE_DISTANCE = 2000.0
+RELIEF_SAMPLE_DISTANCE = 5000.0
 
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
@@ -130,8 +131,10 @@ LULC_CODE_TO_HAB_MAP = {
 gdal.SetCacheMax(2**30)
 
 logging.basicConfig(
-    format='%(asctime)s %(name)-10s %(levelname)-8s %(message)s',
-    level=logging.DEBUG, datefmt='%m/%d/%Y %H:%M:%S ',
+    level=logging.DEBUG,
+    format=(
+        '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
+        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'),
     stream=sys.stdout)
 LOGGER = logging.getLogger(__name__)
 
@@ -272,8 +275,7 @@ def cv_grid_worker(
             LOGGER.debug('running')
         # otherwise payload is the bounding box
         index, (lng_min, lat_min, lng_max, lat_max) = payload
-        bounding_box = shapely.geometry.box(
-            lng_min, lat_min, lng_max, lat_max)
+        bounding_box_list = [lng_min, lat_min, lng_max, lat_max]
         # create workspace
         workspace_dir = os.path.join(
             GRID_WORKSPACE_DIR, '%d_%s_%s_%s_%s' % (
@@ -290,18 +292,20 @@ def cv_grid_worker(
         wgs84_srs = osr.SpatialReference()
         wgs84_srs.ImportFromEPSG(4326)
 
-        missing_data = False
-
         try:
-            # clip_geometry(
-            #     bounding_box, base_srs, target_srs, ogr_geometry_type,
-            #     global_geom_rtree, target_field_name, target_vector_path)
             local_geomorphology_vector_path = os.path.join(
                 workspace_dir, 'geomorphology.gpkg')
             clip_geometry(
-                bounding_box, wgs84_srs, utm_srs,
+                bounding_box_list, wgs84_srs, utm_srs,
                 ogr.wkbMultiLineString, geomorphology_rtree, 'risk',
                 local_geomorphology_vector_path)
+
+            local_dem_path = os.path.join(
+                workspace_dir, 'dem.tif')
+            clip_and_reproject_raster(
+                global_dem_path, local_dem_path, utm_srs.ExportToWkt(),
+                bounding_box_list, RELIEF_SAMPLE_DISTANCE, 'bilinear')
+
             shore_point_vector_path = os.path.join(
                 workspace_dir, 'shore_points.gpkg')
             sample_line_to_points(
@@ -354,13 +358,13 @@ def calculate_utm_srs(lng, lat):
 
 
 def clip_geometry(
-        bounding_box, base_srs, target_srs, ogr_geometry_type,
+        bounding_box_coords, base_srs, target_srs, ogr_geometry_type,
         global_geom_rtree, target_field_name, target_vector_path):
     """Clip geometry in `global_geom_rtree` to bounding box.
 
     Parameters:
-        bounding_box (shapely.Box): a shapely box in the same coordinate
-            system as the geometry in `global_geom_rtree`.
+        bounding_box_coords (list): a list of bounding box coordinates in
+            the same coordinate system as the geometry in `global_geom_rtree`.
         target_srs (osr.SpatialReference): target spatial reference for
             creating the target vector.
         ogr_geometry_type (ogr.wkb[TYPE]): geometry type to create for the
@@ -389,6 +393,8 @@ def clip_geometry(
     layer_defn = layer.GetLayerDefn()
     base_to_target_transform = osr.CoordinateTransformation(
         base_srs, target_srs)
+
+    bounding_box = shapely.geometry.box(*bounding_box_coords)
 
     possible_geom_list = global_geom_rtree.query(bounding_box)
     if not possible_geom_list:
@@ -449,6 +455,266 @@ def sample_line_to_points(
     point_vector = None
     line_layer = None
     line_vector = None
+
+
+def calculate_relief(
+        base_shore_point_vector_path, global_dem_path, workspace_dir,
+        target_relief_point_vector_path):
+    """Calculate DEM relief as average coastal land area within 5km.
+
+    Parameters:
+        base_shore_point_vector_path (string):  path to a point shapefile to
+            for relief point analysis.
+        global_dem_path (string): path to a DEM raster projected in wgs84.
+        workspace_dir (string): path to a directory to make local calculations
+            in
+        target_relief_point_vector_path (string): path to output vector.
+            after completion will a value for average relief within 5km in
+            a field called 'relief'.
+
+    Returns:
+        None.
+
+    """
+    try:
+        if not os.path.exists(os.path.dirname(
+                target_relief_point_vector_path)):
+            os.makedirs(
+                os.path.dirname(target_relief_point_vector_path))
+        if not os.path.exists(workspace_dir):
+            os.makedirs(workspace_dir)
+        if os.path.exists(target_relief_point_vector_path):
+            os.remove(target_relief_point_vector_path)
+
+        base_ref_wkt = pygeoprocessing.get_vector_info(
+            base_shore_point_vector_path)['projection']
+        base_spatial_reference = osr.SpatialReference()
+        base_spatial_reference.ImportFromWkt(base_ref_wkt)
+
+        # reproject base_shore_point_vector_path to utm coordinates
+        base_shore_info = pygeoprocessing.get_vector_info(
+            base_shore_point_vector_path)
+        base_shore_bounding_box = base_shore_info['bounding_box']
+
+        utm_spatial_reference = get_utm_spatial_reference(
+            base_shore_info['bounding_box'])
+        base_spatial_reference = osr.SpatialReference()
+        base_spatial_reference.ImportFromWkt(base_shore_info['projection'])
+
+        pygeoprocessing.reproject_vector(
+            base_shore_point_vector_path, utm_spatial_reference.ExportToWkt(),
+            target_relief_point_vector_path, driver_name='GPKG')
+
+        utm_bounding_box = pygeoprocessing.get_vector_info(
+            target_relief_point_vector_path)['bounding_box']
+
+        target_relief_point_vector = ogr.Open(
+            target_relief_point_vector_path, 1)
+        target_relief_point_layer = target_relief_point_vector.GetLayer()
+
+        relief_field = ogr.FieldDefn('relief', ogr.OFTReal)
+        relief_field.SetPrecision(5)
+        relief_field.SetWidth(24)
+        target_relief_point_layer.CreateField(relief_field)
+        target_relief_point_layer.CreateField(ogr.FieldDefn(
+            'id', ogr.OFTInteger))
+        for target_feature in target_relief_point_layer:
+            target_feature.SetField('id', target_feature.GetFID())
+            target_relief_point_layer.SetFeature(target_feature)
+
+        # extend bounding box for max fetch distance
+        utm_bounding_box = [
+            utm_bounding_box[0] - _MAX_FETCH_DISTANCE,
+            utm_bounding_box[1] - _MAX_FETCH_DISTANCE,
+            utm_bounding_box[2] + _MAX_FETCH_DISTANCE,
+            utm_bounding_box[3] + _MAX_FETCH_DISTANCE]
+
+        # get lat/lng bounding box of utm projected coordinates
+
+        # get global polygon clip of that utm box
+        # transform local box back to lat/lng -> global clipping box
+        lat_lng_clipping_box = pygeoprocessing.transform_bounding_box(
+            utm_bounding_box, utm_spatial_reference.ExportToWkt(),
+            base_spatial_reference.ExportToWkt(), edge_samples=11)
+        if (base_shore_bounding_box[0] > 0 and
+                lat_lng_clipping_box[0] > lat_lng_clipping_box[2]):
+            lat_lng_clipping_box[2] += 360
+        elif (base_shore_bounding_box[0] < 0 and
+              lat_lng_clipping_box[0] > lat_lng_clipping_box[2]):
+            lat_lng_clipping_box[0] -= 360
+        elif base_shore_bounding_box == [0, 0, 0, 0]:
+            # this case guards for an empty shore point in case there are
+            # very tiny islands or such
+            lat_lng_clipping_box = (0, 0, 0, 0)
+
+        clipped_lat_lng_dem_path = os.path.join(
+            workspace_dir, 'clipped_lat_lng_dem.tif')
+
+        target_pixel_size = pygeoprocessing.get_raster_info(
+            global_dem_path)['pixel_size']
+        pygeoprocessing.warp_raster(
+            global_dem_path, target_pixel_size, clipped_lat_lng_dem_path,
+            'bilinear', target_bb=lat_lng_clipping_box)
+        clipped_utm_dem_path = os.path.join(
+            workspace_dir, 'clipped_utm_dem.tif')
+        target_pixel_size = (
+            _SMALLEST_FEATURE_SIZE / 2.0, -_SMALLEST_FEATURE_SIZE / 2.0)
+        pygeoprocessing.warp_raster(
+            clipped_lat_lng_dem_path, target_pixel_size, clipped_utm_dem_path,
+            'bilinear', target_sr_wkt=utm_spatial_reference.ExportToWkt())
+        # mask out all DEM < 0 to 0
+        nodata = pygeoprocessing.get_raster_info(
+            clipped_utm_dem_path)['nodata'][0]
+
+        def zero_negative_values(depth_array):
+            valid_mask = depth_array != nodata
+            result_array = numpy.empty(
+                depth_array.shape, dtype=numpy.int16)
+            result_array[:] = nodata
+            result_array[valid_mask] = 0
+            result_array[depth_array > 0] = depth_array[depth_array > 0]
+            return result_array
+
+        positive_dem_path = os.path.join(
+            workspace_dir, 'positive_dem.tif')
+
+        pygeoprocessing.raster_calculator(
+            [(clipped_utm_dem_path, 1)], zero_negative_values,
+            positive_dem_path, gdal.GDT_Int16, nodata)
+
+        # convolve over a 5km radius
+        radius_in_pixels = 5000.0 / target_pixel_size[0]
+        kernel_filepath = os.path.join(workspace_dir, 'averaging_kernel.tif')
+        create_averaging_kernel_raster(radius_in_pixels, kernel_filepath)
+
+        relief_path = os.path.join(workspace_dir, 'relief.tif')
+        pygeoprocessing.convolve_2d(
+            (positive_dem_path, 1), (kernel_filepath, 1), relief_path)
+
+        relief_raster = gdal.Open(relief_path)
+        relief_band = relief_raster.GetRasterBand(1)
+        n_rows = relief_band.YSize
+        relief_geotransform = relief_raster.GetGeoTransform()
+        target_relief_point_layer.ResetReading()
+        for point_feature in target_relief_point_layer:
+            point_geometry = point_feature.GetGeometryRef()
+            point_x, point_y = point_geometry.GetX(), point_geometry.GetY()
+            point_geometry = None
+
+            pixel_x = int(
+                (point_x - relief_geotransform[0]) / relief_geotransform[1])
+            pixel_y = int(
+                (point_y - relief_geotransform[3]) / relief_geotransform[5])
+
+            if pixel_y >= n_rows:
+                pixel_y = n_rows - 1
+            try:
+                pixel_value = relief_band.ReadAsArray(
+                    xoff=pixel_x, yoff=pixel_y, win_xsize=1,
+                    win_ysize=1)[0, 0]
+            except Exception:
+                LOGGER.error(
+                    'relief_band size %d %d', relief_band.XSize,
+                    relief_band.YSize)
+                raise
+            # Make relief "negative" so when we histogram it for risk a
+            # "higher" value will show a lower risk.
+            point_feature.SetField('relief', -float(pixel_value))
+            target_relief_point_layer.SetFeature(point_feature)
+
+        target_relief_point_layer.SyncToDisk()
+        target_relief_point_layer = None
+        target_relief_point_vector = None
+
+    except Exception:
+        traceback.print_exc()
+        raise
+
+
+def clip_and_reproject_raster(
+        base_raster_path, target_raster_path, target_srs_wkt,
+        target_bounding_box, edge_buffer, resample_method):
+    """Clip and reproject base to target raster.
+
+    Parameters:
+        base_raster_path (str): path to the raster to clip from.
+        target_raster_path (str): path to target raster that is a clip from
+            base projected in `target_srs_wkt` coordinate system.
+        target_srs_wkt (str): spatial reference of target coordinate system in
+            wkt.
+        target_bounding_box (list): List of float describing target bounding
+            box in base coordinate system as [minx, miny, maxx, maxy].
+        edge_buffer (float): amount to extend sides of bounding box in target
+            coordinate system units.
+        resample_method (str): one of
+            "near|bilinear|cubic|cubicspline|lanczos|mode".
+
+    Returns:
+        None.
+
+    """
+    base_raster_info = pygeoprocessing.get_raster_info(base_raster_path)
+    local_bounding_box = pygeoprocessing.transform_bounding_box(
+        target_bounding_box, base_raster_info['projection'],
+        target_srs_wkt, edge_samples=11)
+    buffered_bounding_box = [
+        local_bounding_box[0]-edge_buffer,
+        local_bounding_box[1]-edge_buffer,
+        local_bounding_box[2]+edge_buffer,
+        local_bounding_box[3]+edge_buffer,
+    ]
+
+    bb_centroid = [
+        (target_bounding_box[0]+target_bounding_box[2])/2,
+        (target_bounding_box[1]+target_bounding_box[3])/2]
+
+    LOGGER.debug(buffered_bounding_box)
+    target_pixel_size = estimate_projected_pixel_size(
+        base_raster_path, bb_centroid, target_srs_wkt)
+    LOGGER.debug(target_pixel_size)
+    pygeoprocessing.warp_raster(
+        base_raster_path, target_pixel_size, target_raster_path,
+        resample_method, target_bb=buffered_bounding_box,
+        target_sr_wkt=target_srs_wkt,
+        working_dir=os.path.dirname(target_raster_path))
+
+
+def estimate_projected_pixel_size(
+        base_raster_path, sample_point, target_srs_wkt):
+    """Estimate the pixel size of raster if projected in `target_srs_wkt`.
+
+    Parameters:
+        base_raster_path (str): path to a raster in some coordinate system.
+        sample_point (list): [x, y] coordinate in base coordinate system of
+            point to estimate projected pixel size around.
+        target_srs_wkt (str): desired target coordinate system in wkt for
+            estimate pixel size.
+
+    Returns:
+        None.
+
+    """
+    base_raster_info = pygeoprocessing.get_raster_info(base_raster_path)
+    base_bb = base_raster_info['bounding_box']
+    base_pixel_size = base_raster_info['pixel_size']
+    raster_center_pixel_bb = [
+        sample_point[0] - abs(base_pixel_size[0]/2),
+        sample_point[1] - abs(base_pixel_size[1]/2),
+        sample_point[0] + abs(base_pixel_size[0]/2),
+        sample_point[1] + abs(base_pixel_size[1]/2),
+    ]
+    pixel_bb = pygeoprocessing.transform_bounding_box(
+        raster_center_pixel_bb, base_raster_info['projection'], target_srs_wkt)
+    # x goes to the right, y goes down
+    estimated_pixel_size = [
+        pixel_bb[2]-pixel_bb[0],
+        pixel_bb[1]-pixel_bb[3]]
+    LOGGER.debug(base_bb)
+    LOGGER.debug(base_pixel_size)
+    LOGGER.debug(raster_center_pixel_bb)
+    LOGGER.debug(pixel_bb)
+    LOGGER.debug(estimated_pixel_size)
+    return estimated_pixel_size
 
 
 if __name__ == '__main__':
