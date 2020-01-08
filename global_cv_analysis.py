@@ -314,14 +314,18 @@ def cv_grid_worker(
                 local_geomorphology_vector_path, shore_point_vector_path,
                 SHORE_POINT_SAMPLE_DISTANCE)
 
+            LOGGER.info('calculate relief on %s', workspace_dir)
             calculate_relief(
                 shore_point_vector_path, local_dem_path, 'Rrelief')
+            LOGGER.info('calculate rhab on %s', workspace_dir)
+            calculate_rhab(
+                shore_point_vector_path, habitat_vector_path_map,
+                habitat_raster_path_map, 'Rhab')
 
             LOGGER.debug('exiting for debugging purposes')
+
             sys.exit(0)
 
-            # Rrelief
-            # Rhab
             # Rslr
             # Rwind
             # Rwave
@@ -332,8 +336,54 @@ def cv_grid_worker(
             retrying_rmtree(workspace_dir)
 
 
+def calculate_rhab(
+        shore_point_vector_path, habitat_vector_path_map,
+        habitat_raster_path_map, target_fieldname):
+    """Add Rhab risk to the shore point vector path.
+
+    Parameters:
+        shore_point_vector_path (str): path to a vector of points in a local
+            projected coordinate system. This vector will be modified by this
+            function to include a new field called `target_fieldname`
+            containing the weighted Rhab risk for the given point.
+        habitat_vector_path_map (dict): a dictionary mapping "hab id"s to
+            (path to vector, risk, effective distance) tuples.
+        habitat_raster_path_map (dict): a dictionary mapping "hab id"s to
+            (path to raster, risk, effective distance) tuples.
+        target_fieldname (str): fieldname to add to `shore_point_vector_path`
+            that will contain the value of Rhab calculated for that point.
+
+    Returns:
+        None.
+
+    """
+    shore_point_vector = gdal.OpenEx(
+        shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
+    shore_point_layer = shore_point_vector.GetLayer()
+    relief_field = ogr.FieldDefn(target_fieldname, ogr.OFTReal)
+    relief_field.SetPrecision(5)
+    relief_field.SetWidth(24)
+    shore_point_layer.CreateField(relief_field)
+
+    shore_point_info = pygeoprocessing.get_vector_info(shore_point_vector_path)
+
+    tmp_working_dir = tempfile.mkdtemp(
+        prefix='calculate_rhab_',
+        dir=os.path.dirname(shore_point_vector_path))
+
+    for hab_id, (hab_raster_path, risk, eff_dist) in (
+                habitat_raster_path_map.items()):
+        local_hab_raster_path = os.path.join(
+            tmp_working_dir, '%s.tif' % str(hab_id))
+        LOGGER.debug('clip and reproject %s to %s', hab_raster_path, shore_point_info['bounding_box'])
+        clip_and_reproject_raster(
+            hab_raster_path, local_hab_raster_path,
+            shore_point_info['projection'], shore_point_info['bounding_box'],
+            eff_dist, 'bilinear')
+
+
 @retrying.retry(
-    wait_exponential_multiplier=1000, wait_exponential_max=10000,
+    wait_exponential_multiplier=100, wait_exponential_max=2000,
     stop_max_attempt_number=5)
 def retrying_rmtree(dir_path):
     """Remove `dir_path` but try a few times."""
@@ -365,7 +415,7 @@ def calculate_utm_srs(lng, lat):
 
 def clip_geometry(
         bounding_box_coords, base_srs, target_srs, ogr_geometry_type,
-        global_geom_rtree, target_field_name, target_vector_path):
+        global_geom_rtree, target_fieldname, target_vector_path):
     """Clip geometry in `global_geom_rtree` to bounding box.
 
     Parameters:
@@ -378,8 +428,8 @@ def clip_geometry(
         global_geom_rtree (shapely.str_rtree): an rtree loaded with geometry
             to query via bounding box. Each geometry will contain parameters
             `field_val` and `prep` that have values to copy to
-            `target_field_name` and used to quickly query geometry.
-        target_field_name (str): field name to create in the target feature
+            `target_fieldname` and used to quickly query geometry.
+        target_fieldname (str): field name to create in the target feature
             that will contain the value of .field_val
         target_vector_path (str): path to vector to create that will contain
             locally projected geometry clipped to the given bounding box.
@@ -395,7 +445,7 @@ def clip_geometry(
         os.path.splitext(os.path.basename(target_vector_path))[0],
         target_srs, ogr_geometry_type)
     layer.CreateField(
-        ogr.FieldDefn(target_field_name, ogr.OFTReal))
+        ogr.FieldDefn(target_fieldname, ogr.OFTReal))
     layer_defn = layer.GetLayerDefn()
     base_to_target_transform = osr.CoordinateTransformation(
         base_srs, target_srs)
@@ -464,14 +514,14 @@ def sample_line_to_points(
 
 
 def calculate_relief(
-        shore_point_vector_path, dem_path, target_field_name):
+        shore_point_vector_path, dem_path, target_fieldname):
     """Calculate DEM relief as average coastal land area within 5km.
 
     Parameters:
         shore_point_vector_path (string):  path to a point shapefile to
             for relief point analysis.
         dem_path (string): path to a DEM raster projected in local coordinates.
-        target_field_name (string): this field name will be added to
+        target_fieldname (string): this field name will be added to
             `shore_point_vector_path` and filled with Relief values.
 
     Returns:
@@ -482,13 +532,14 @@ def calculate_relief(
         shore_point_vector = gdal.OpenEx(
             shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
         shore_point_layer = shore_point_vector.GetLayer()
-        relief_field = ogr.FieldDefn(target_field_name, ogr.OFTReal)
+        relief_field = ogr.FieldDefn(target_fieldname, ogr.OFTReal)
         relief_field.SetPrecision(5)
         relief_field.SetWidth(24)
         shore_point_layer.CreateField(relief_field)
         dem_info = pygeoprocessing.get_raster_info(dem_path)
 
         tmp_working_dir = tempfile.mkdtemp(
+            prefix='calculate_relief_',
             dir=os.path.dirname(shore_point_vector_path))
 
         dem_nodata = dem_info['nodata'][0]
@@ -511,8 +562,8 @@ def calculate_relief(
         # convolve over a 5km radius
         dem_pixel_size = dem_info['pixel_size']
         kernel_radius = (
-            abs(5000.0 // dem_pixel_size[0]),
-            abs(5000.0 // dem_pixel_size[1]))
+            abs(RELIEF_SAMPLE_DISTANCE // dem_pixel_size[0]),
+            abs(RELIEF_SAMPLE_DISTANCE // dem_pixel_size[1]))
 
         kernel_filepath = os.path.join(
             tmp_working_dir, 'averaging_kernel.tif')
@@ -547,15 +598,17 @@ def calculate_relief(
                 raise
             # Make relief "negative" so when we histogram it for risk a
             # "higher" value will show a lower risk.
-            point_feature.SetField(target_field_name, -float(pixel_value))
+            point_feature.SetField(target_fieldname, -float(pixel_value))
             shore_point_layer.SetFeature(point_feature)
 
         shore_point_layer.SyncToDisk()
         shore_point_layer = None
         shore_point_vector = None
+        relief_raster = None
+        relief_band = None
 
         try:
-            shutil.rmtree(tmp_working_dir)
+            retrying_rmtree(tmp_working_dir)
         except OSError:
             LOGGER.warning('unable to rm %s' % tmp_working_dir)
 
@@ -628,7 +681,6 @@ def estimate_projected_pixel_size(
 
     """
     base_raster_info = pygeoprocessing.get_raster_info(base_raster_path)
-    base_bb = base_raster_info['bounding_box']
     base_pixel_size = base_raster_info['pixel_size']
     raster_center_pixel_bb = [
         sample_point[0] - abs(base_pixel_size[0]/2),
@@ -642,11 +694,6 @@ def estimate_projected_pixel_size(
     estimated_pixel_size = [
         pixel_bb[2]-pixel_bb[0],
         pixel_bb[1]-pixel_bb[3]]
-    LOGGER.debug(base_bb)
-    LOGGER.debug(base_pixel_size)
-    LOGGER.debug(raster_center_pixel_bb)
-    LOGGER.debug(pixel_bb)
-    LOGGER.debug(estimated_pixel_size)
     return estimated_pixel_size
 
 
@@ -824,6 +871,9 @@ if __name__ == '__main__':
     habitat_raster_risk_map = {}
     for risk_distance_tuple, lulc_code_list in sorted(
             risk_distance_to_lulc_code.items()):
+        if risk_distance_tuple[0] == 0:
+            LOGGER.info('skipping hab tuple %s', str(risk_distance_tuple))
+            continue
         # reclassify landcover map to be ones everywhere for `lulc_code_list`
         reclass_map = {}
         for lulc_code in LULC_CODE_TO_HAB_MAP:
@@ -843,7 +893,9 @@ if __name__ == '__main__':
             target_path_list=[risk_distance_mask_path],
             dependent_task_list=[mask_lulc_by_shore_task],
             task_name='map distance types %s' % str(risk_distance_tuple))
-        habitat_raster_risk_map[risk_distance_tuple] = risk_distance_mask_path
+        habitat_raster_risk_map[risk_distance_tuple] = (
+            risk_distance_mask_path, risk_distance_tuple[0],
+            risk_distance_tuple[1])
 
     task_graph.join()
     task_graph.close()
