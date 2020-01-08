@@ -306,7 +306,7 @@ def cv_grid_worker(
                 workspace_dir, 'dem.tif')
             clip_and_reproject_raster(
                 global_dem_path, local_dem_path, utm_srs.ExportToWkt(),
-                bounding_box_list, RELIEF_SAMPLE_DISTANCE, 'bilinear')
+                bounding_box_list, RELIEF_SAMPLE_DISTANCE, 'bilinear', True)
 
             shore_point_vector_path = os.path.join(
                 workspace_dir, 'shore_points.gpkg')
@@ -375,11 +375,12 @@ def calculate_rhab(
                 habitat_raster_path_map.items()):
         local_hab_raster_path = os.path.join(
             tmp_working_dir, '%s.tif' % str(hab_id))
-        LOGGER.debug('clip and reproject %s to %s', hab_raster_path, shore_point_info['bounding_box'])
+        LOGGER.debug('clip %s to %s', hab_raster_path, shore_point_info['bounding_box'])
+
         clip_and_reproject_raster(
             hab_raster_path, local_hab_raster_path,
-            shore_point_info['projection'], shore_point_info['bounding_box'],
-            eff_dist, 'bilinear')
+            shore_point_info['projection'],
+            shore_point_info['bounding_box'], eff_dist, 'near', False)
 
 
 @retrying.retry(
@@ -619,7 +620,8 @@ def calculate_relief(
 
 def clip_and_reproject_raster(
         base_raster_path, target_raster_path, target_srs_wkt,
-        target_bounding_box, edge_buffer, resample_method):
+        target_bounding_box, edge_buffer, resample_method,
+        reproject_bounding_box):
     """Clip and reproject base to target raster.
 
     Parameters:
@@ -634,25 +636,40 @@ def clip_and_reproject_raster(
             coordinate system units.
         resample_method (str): one of
             "near|bilinear|cubic|cubicspline|lanczos|mode".
+        reproject_bounding_box (bool): If true, project `target_bounding_box`
+            from base coordinate system to `target_srs_wkt`.
 
     Returns:
         None.
 
     """
     base_raster_info = pygeoprocessing.get_raster_info(base_raster_path)
-    local_bounding_box = pygeoprocessing.transform_bounding_box(
-        target_bounding_box, base_raster_info['projection'],
-        target_srs_wkt, edge_samples=11)
+    bb_centroid = (
+        (target_bounding_box[0]+target_bounding_box[2])/2,
+        (target_bounding_box[1]+target_bounding_box[3])/2)
+
+    if reproject_bounding_box:
+        local_bounding_box = pygeoprocessing.transform_bounding_box(
+            target_bounding_box, base_raster_info['projection'],
+            target_srs_wkt, edge_samples=11)
+    else:
+        local_bounding_box = target_bounding_box
+        base_srs = osr.SpatialReference()
+        base_srs.ImportFromWkt(base_raster_info['projection'])
+        target_srs = osr.SpatialReference()
+        target_srs.ImportFromWkt(target_srs_wkt)
+        target_to_base_transform = osr.CoordinateTransformation(
+            target_srs, base_srs)
+        point = ogr.CreateGeometryFromWkt("POINT (%f %f)" % bb_centroid)
+        point.Transform(target_to_base_transform)
+        bb_centroid = (point.GetX(), point.GetY())
+
     buffered_bounding_box = [
         local_bounding_box[0]-edge_buffer,
         local_bounding_box[1]-edge_buffer,
         local_bounding_box[2]+edge_buffer,
         local_bounding_box[3]+edge_buffer,
     ]
-
-    bb_centroid = [
-        (target_bounding_box[0]+target_bounding_box[2])/2,
-        (target_bounding_box[1]+target_bounding_box[3])/2]
 
     LOGGER.debug(buffered_bounding_box)
     target_pixel_size = estimate_projected_pixel_size(
@@ -663,6 +680,51 @@ def clip_and_reproject_raster(
         resample_method, target_bb=buffered_bounding_box,
         target_sr_wkt=target_srs_wkt,
         working_dir=os.path.dirname(target_raster_path))
+
+
+def clip_raster(
+        base_raster_path, target_raster_path,
+        target_bounding_box, edge_buffer):
+    """Clip and reproject base to target raster.
+
+    Parameters:
+        base_raster_path (str): path to the raster to clip from.
+        target_raster_path (str): path to target raster that is a clip from
+            base projected in `target_srs_wkt` coordinate system.
+        target_srs_wkt (str): spatial reference of target coordinate system in
+            wkt.
+        target_bounding_box (list): List of float describing target bounding
+            box in base coordinate system as [minx, miny, maxx, maxy].
+        edge_buffer (float): amount to extend sides of bounding box in target
+            coordinate system units.
+        resample_method (str): one of
+            "near|bilinear|cubic|cubicspline|lanczos|mode".
+        target_bounding_box (bool): If True, assumes bounding box is in
+            base coordinate system and will transform it to target.
+
+    Returns:
+        None.
+
+    """
+    buffered_bounding_box = [
+        target_bounding_box[0]-edge_buffer,
+        target_bounding_box[1]-edge_buffer,
+        target_bounding_box[2]+edge_buffer,
+        target_bounding_box[3]+edge_buffer,
+    ]
+
+    base_raster = gdal.OpenEx(base_raster_path)
+    gdal.Translate(
+        target_raster_path, base_raster,
+        format='GTiff',
+        creationOptions=[
+            'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
+            'BLOCKXSIZE=256', 'BLOCKYSIZE=256'],
+        outputBounds=buffered_bounding_box,
+        callback=pygeoprocessing._make_logger_callback(
+            "Translate %.1f%% complete")
+)
+    base_raster = None
 
 
 def estimate_projected_pixel_size(
