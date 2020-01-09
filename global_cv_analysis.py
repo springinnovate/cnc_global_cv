@@ -36,31 +36,33 @@ GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'grid_workspaces')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 TARGET_NODATA = -1
 
-#[minx, miny, maxx, maxy].
+# [minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
 SHORE_POINT_SAMPLE_DISTANCE = 2000.0
 RELIEF_SAMPLE_DISTANCE = 5000.0
 
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
+
 GLOBAL_POLYGON_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_global_polygon_simplified_geometries_'
     'md5_653118dde775057e24de52542b01eaee.gpkg')
 GLOBAL_GEOMORPHOLOGY_ZIP_URL = (
     ECOSHARD_BUCKET_URL + 'SedType_md5_d670148183cc7f817e26570e77ca3449.zip')
-GLOBAL_REEFS_ZIP_URL = (
-    ECOSHARD_BUCKET_URL + 'Reefs_md5_50b159fff92762ffa5efa0c611b436ce.zip')
-GLOBAL_MANGROVES_ZIP_URL = (
+
+GLOBAL_REEFS_URL = (
     ECOSHARD_BUCKET_URL +
-    'GMW_001_GlobalMangroveWatch_2016-20191216T181028Z-001_'
-    'md5_dd4b04fb9cac2314af99beed2b2c856a.zip')
+    'ipbes-cv_reef_md5_5a90d55a505813b5aa9662faee351bf8.tif')
+GLOBAL_MANGROVES_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_mangrove_md5_2205f546ab3eb92f9901b3e57258b998.tif')
 GLOBAL_SEAGRASS_URL = (
     ECOSHARD_BUCKET_URL +
-    'ipbes-cv_seagrass_valid_md5_e206dde7cc9b95ba9846efa12b63d333.gpkg')
+    'ipbes-cv_seagrass_md5_a9cc6d922d2e74a14f74b4107c94a0d6.tif')
 GLOBAL_SALTMARSH_URL = (
     ECOSHARD_BUCKET_URL +
-    'ipbes-cv_saltmarsh_valid_md5_56364edc15ab96d79b9fa08b12ec56ab.gpkg')
+    'ipbes-cv_saltmarsh_md5_203d8600fd4b6df91f53f66f2a011bcd.tif')
 
 LULC_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
@@ -144,21 +146,17 @@ STOP_SENTINEL = 'STOP'
 
 HABITAT_VECTOR_PATH_MAP = {
     'reefs': (
-        os.path.join(ECOSHARD_DIR, 'Reefs', 'reef_500_poly.shp'), 1, 2000.0),
+        os.path.join(ECOSHARD_DIR, os.path.basename(GLOBAL_REEFS_URL)), 1,
+        2000.0),
     'mangroves': (
         os.path.join(
-            ECOSHARD_DIR, 'GMW_001_GlobalMangroveWatch_2016',
-            '01_Data', 'GMW_2016_v2.shp'), 1, 1000.0),
+            ECOSHARD_DIR, os.path.basename(GLOBAL_MANGROVES_URL)), 1, 1000.0),
     'saltmarsh': (
         os.path.join(
-            ECOSHARD_DIR,
-            'ipbes-cv_saltmarsh_valid_'
-            'md5_56364edc15ab96d79b9fa08b12ec56ab.gpkg'), 2, 1000.0),
+            ECOSHARD_DIR, os.path.basename(GLOBAL_SEAGRASS_URL)), 2, 1000.0),
     'seagrass': (
         os.path.join(
-            ECOSHARD_DIR,
-            'ipbes-cv_seagrass_valid_'
-            'md5_e206dde7cc9b95ba9846efa12b63d333.gpkg'), 4, 500.0)}
+            ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL)), 4, 500.0)}
 
 
 def download_and_unzip(url, target_dir, target_token_path):
@@ -235,7 +233,6 @@ def cv_grid_worker(
         global_dem_raster_path,
         slr_raster_path,
         wwiii_vector_path,
-        habitat_vector_path_map,
         habitat_raster_path_map,
         ):
     """Worker process to calculate CV for a grid.
@@ -250,9 +247,6 @@ def cv_grid_worker(
         slr_raster_path (str): path to a sea level rise raster.
         wwiii_vector_path (str): path to wave watch III dataset that has
             fields TODO FILL IN WHAT THEY ARE
-        habitat_vector_path_map (dict): maps a habitat id to a
-            (path, risk, dist(m)) tuple. These habitats should be used in the
-            calculation of Rhab.
         habitat_raster_path_map (dict): mapt a habitat id to a
             (raster path, risk, dist(m)) tuple. These are the raster versions
             of habitats to use in Rhab.
@@ -319,8 +313,7 @@ def cv_grid_worker(
                 shore_point_vector_path, local_dem_path, 'Rrelief')
             LOGGER.info('calculate rhab on %s', workspace_dir)
             calculate_rhab(
-                shore_point_vector_path, habitat_vector_path_map,
-                habitat_raster_path_map, 'Rhab')
+                shore_point_vector_path, habitat_raster_path_map, 'Rhab')
 
             LOGGER.debug('exiting for debugging purposes')
 
@@ -337,8 +330,7 @@ def cv_grid_worker(
 
 
 def calculate_rhab(
-        shore_point_vector_path, habitat_vector_path_map,
-        habitat_raster_path_map, target_fieldname):
+        shore_point_vector_path, habitat_raster_path_map, target_fieldname):
     """Add Rhab risk to the shore point vector path.
 
     Parameters:
@@ -346,8 +338,6 @@ def calculate_rhab(
             projected coordinate system. This vector will be modified by this
             function to include a new field called `target_fieldname`
             containing the weighted Rhab risk for the given point.
-        habitat_vector_path_map (dict): a dictionary mapping "hab id"s to
-            (path to vector, risk, effective distance) tuples.
         habitat_raster_path_map (dict): a dictionary mapping "hab id"s to
             (path to raster, risk, effective distance) tuples.
         target_fieldname (str): fieldname to add to `shore_point_vector_path`
@@ -371,11 +361,16 @@ def calculate_rhab(
         prefix='calculate_rhab_',
         dir=os.path.dirname(shore_point_vector_path))
 
+    # use for caching r-tree hab types
+    if not hasattr(calculate_rhab, 'hab_id_to_rtree_map'):
+        calculate_rhab.hab_id_to_rtree = {}
+
     for hab_id, (hab_raster_path, risk, eff_dist) in (
                 habitat_raster_path_map.items()):
         local_hab_raster_path = os.path.join(
             tmp_working_dir, '%s.tif' % str(hab_id))
-        LOGGER.debug('clip %s to %s', hab_raster_path, shore_point_info['bounding_box'])
+        LOGGER.debug(
+            'clip %s to %s', hab_raster_path, shore_point_info['bounding_box'])
 
         clip_and_reproject_raster(
             hab_raster_path, local_hab_raster_path,
@@ -430,8 +425,8 @@ def clip_geometry(
             to query via bounding box. Each geometry will contain parameters
             `field_val` and `prep` that have values to copy to
             `target_fieldname` and used to quickly query geometry.
-        target_fieldname (str): field name to create in the target feature
-            that will contain the value of .field_val
+        target_fieldname (str): If not None, field name to create in the target
+            feature that will contain the value of .field_val
         target_vector_path (str): path to vector to create that will contain
             locally projected geometry clipped to the given bounding box.
 
@@ -445,8 +440,9 @@ def clip_geometry(
     layer = vector.CreateLayer(
         os.path.splitext(os.path.basename(target_vector_path))[0],
         target_srs, ogr_geometry_type)
-    layer.CreateField(
-        ogr.FieldDefn(target_fieldname, ogr.OFTReal))
+    if target_fieldname:
+        layer.CreateField(
+            ogr.FieldDefn(target_fieldname, ogr.OFTReal))
     layer_defn = layer.GetLayerDefn()
     base_to_target_transform = osr.CoordinateTransformation(
         base_srs, target_srs)
@@ -454,6 +450,7 @@ def clip_geometry(
     bounding_box = shapely.geometry.box(*bounding_box_coords)
 
     possible_geom_list = global_geom_rtree.query(bounding_box)
+    LOGGER.debug('possible intersections %d', len(possible_geom_list))
     if not possible_geom_list:
         layer = None
         vector = None
@@ -466,7 +463,8 @@ def clip_geometry(
             raise RuntimeError(error_code)
         feature = ogr.Feature(layer_defn)
         feature.SetGeometry(clipped_line_geom.Clone())
-        feature.SetField('risk', geom.field_val)
+        if target_fieldname:
+            feature.SetField(target_fieldname, geom.field_val)
         layer.CreateFeature(feature)
 
 
@@ -488,13 +486,15 @@ def sample_line_to_points(
     """
     line_vector = gdal.OpenEx(line_vector_path)
     line_layer = line_vector.GetLayer()
+    layer_name = os.path.splitext(os.path.basename(line_vector_path))[0]
 
     gpkg_driver = ogr.GetDriverByName('GPKG')
     if os.path.exists(target_point_path):
         os.remove(target_point_path)
     point_vector = gpkg_driver.CreateDataSource(target_point_path)
     point_layer = point_vector.CreateLayer(
-        'points', line_layer.GetSpatialRef(), ogr.wkbPoint, ['OVERWRITE=YES'])
+        layer_name, line_layer.GetSpatialRef(), ogr.wkbPoint,
+        ['OVERWRITE=YES'])
     point_defn = point_layer.GetLayerDefn()
     for feature in line_layer:
         current_distance = 0.0
@@ -818,8 +818,7 @@ if __name__ == '__main__':
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
 
     for zip_url in [
-            GLOBAL_GEOMORPHOLOGY_ZIP_URL, GLOBAL_REEFS_ZIP_URL,
-            GLOBAL_MANGROVES_ZIP_URL, LS_POPULATION_URL]:
+            GLOBAL_GEOMORPHOLOGY_ZIP_URL, LS_POPULATION_URL]:
         target_token_path = os.path.join(
             CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
         download_and_unzip_task = task_graph.add_task(
@@ -827,6 +826,17 @@ if __name__ == '__main__':
             args=(zip_url, ECOSHARD_DIR, target_token_path),
             target_path_list=[target_token_path],
             task_name='download and unzip %s' % zip_url)
+
+    for ecoshard_url in [
+            GLOBAL_MANGROVES_URL, GLOBAL_REEFS_URL, GLOBAL_SEAGRASS_URL,
+            GLOBAL_SALTMARSH_URL]:
+        local_ecoshard_path = os.path.join(
+            ECOSHARD_DIR, os.path.basename(ecoshard_url))
+        download_task = task_graph.add_task(
+            func=ecoshard.download_url,
+            args=(ecoshard_url, local_ecoshard_path),
+            target_path_list=[local_ecoshard_path],
+            task_name='download %s' % local_ecoshard_path)
 
     slr_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(SLR_RASTER_URL))
@@ -930,7 +940,7 @@ if __name__ == '__main__':
 
     # this maps all the same type of codes together
     lulc_code_to_reclass_value = {}
-    habitat_raster_risk_map = {}
+    habitat_raster_risk_map = dict(HABITAT_VECTOR_PATH_MAP)
     for risk_distance_tuple, lulc_code_list in sorted(
             risk_distance_to_lulc_code.items()):
         if risk_distance_tuple[0] == 0:
@@ -975,7 +985,6 @@ if __name__ == '__main__':
             slr_raster_path,
             global_dem_path,
             global_wwiii_vector_path,
-            HABITAT_VECTOR_PATH_MAP,
             habitat_raster_risk_map,
             ))
 
