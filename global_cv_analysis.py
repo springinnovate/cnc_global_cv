@@ -412,9 +412,34 @@ def calculate_rhab(
                 LOGGER.exception('error on pixel fetch for hab')
             if numpy.isclose(pixel_val, 0.0):
                 pixel_val = 0
+            # use max risk if no coverage
             shore_point_feature_risk_map[shore_feature.GetFID()].append(
-                risk_val if pixel_val else 0)
-    LOGGER.debug(shore_point_feature_risk_map)
+                risk_val if pixel_val else 5)
+
+    shore_point_layer.StartTransaction()
+    for fid, risk_val_list in shore_point_feature_risk_map.items():
+        min_rank = 5.0
+        sum_sq_rank = 0.0
+        for risk_val in risk_val_list:
+            if risk_val < min_rank:
+                min_rank = risk_val
+            sum_sq_rank += (5 - risk_val)**2
+
+        if sum_sq_rank > 0:
+            r_hab_val = max(
+                1.0, 4.8 - 0.5 * (
+                    (1.5 * (5 - min_rank))**2 + sum_sq_rank -
+                    (5 - min_rank)**2)**0.5)
+        else:
+            r_hab_val = 5.0
+
+        shore_feature = shore_point_layer.GetFeature(fid)
+        shore_feature.SetField(target_fieldname, float(r_hab_val))
+        shore_point_layer.SetFeature(shore_feature)
+
+    shore_point_layer.CommitTransaction()
+    shore_point_layer = None
+    shore_point_vector = None
 
 
 @retrying.retry(
