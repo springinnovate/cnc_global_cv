@@ -323,10 +323,13 @@ def cv_grid_worker(
             # Rwind
             # Rwave
             # Rsurge
-        except Exception:
-            LOGGER.exception('error on %s', payload)
-            LOGGER.warning('missing data, removing workspace')
-            retrying_rmtree(workspace_dir)
+        except ValueError as e:
+            if 'no data intersects this box' in str(e):
+                LOGGER.exception('error on %s', payload)
+                LOGGER.warning('missing data, removing workspace')
+                retrying_rmtree(workspace_dir)
+            else:
+                raise
 
 
 def calculate_rhab(
@@ -357,25 +360,61 @@ def calculate_rhab(
 
     shore_point_info = pygeoprocessing.get_vector_info(shore_point_vector_path)
 
+    shore_point_feature_risk_map = collections.defaultdict(list)
+
     tmp_working_dir = tempfile.mkdtemp(
         prefix='calculate_rhab_',
         dir=os.path.dirname(shore_point_vector_path))
-
-    # use for caching r-tree hab types
-    if not hasattr(calculate_rhab, 'hab_id_to_rtree_map'):
-        calculate_rhab.hab_id_to_rtree = {}
-
-    for hab_id, (hab_raster_path, risk, eff_dist) in (
+    LOGGER.debug(tmp_working_dir)
+    for hab_id, (hab_raster_path, risk_val, eff_dist) in (
                 habitat_raster_path_map.items()):
         local_hab_raster_path = os.path.join(
             tmp_working_dir, '%s.tif' % str(hab_id))
         LOGGER.debug(
             'clip %s to %s', hab_raster_path, shore_point_info['bounding_box'])
-
         clip_and_reproject_raster(
             hab_raster_path, local_hab_raster_path,
             shore_point_info['projection'],
             shore_point_info['bounding_box'], eff_dist, 'near', False)
+
+        # make a convolution kernel as wide as the distance but adapted to
+        # the non-square size of the rasters
+        kernel_filepath = '%s_kernel%s' % os.path.splitext(
+            local_hab_raster_path)
+        pixel_size = pygeoprocessing.get_raster_info(
+            local_hab_raster_path)['pixel_size']
+        kernel_radius = [abs(eff_dist / x) for x in pixel_size]
+        create_averaging_kernel_raster(kernel_radius, kernel_filepath)
+        hab_effective_area_raster_path = (
+            '%s_effective_hab%s' % os.path.splitext(local_hab_raster_path))
+        pygeoprocessing.convolve_2d(
+            (local_hab_raster_path, 1), (kernel_filepath, 1),
+            hab_effective_area_raster_path, mask_nodata=False)
+        gt = pygeoprocessing.get_raster_info(
+            hab_effective_area_raster_path)['geotransform']
+        inv_gt = gdal.InvGeoTransform(gt)
+
+        hab_effective_raster = gdal.OpenEx(
+            hab_effective_area_raster_path, gdal.OF_RASTER)
+        hab_effective_band = hab_effective_raster.GetRasterBand(1)
+        shore_point_layer.ResetReading()
+        for shore_feature in shore_point_layer:
+            shore_geom = shore_feature.GetGeometryRef()
+            pixel_x, pixel_y = [
+                int(x) for x in
+                gdal.ApplyGeoTransform(
+                    inv_gt, shore_geom.GetX(), shore_geom.GetY())]
+            try:
+                pixel_val = hab_effective_band.ReadAsArray(
+                    xoff=pixel_x, yoff=pixel_y, win_xsize=1,
+                    win_ysize=1)[0, 0]
+            except Exception:
+                LOGGER.exception('error on pixel fetch for hab')
+            if numpy.isclose(pixel_val, 0.0):
+                pixel_val = 0
+            shore_point_feature_risk_map[shore_feature.GetFID()].append(
+                risk_val if pixel_val else 0)
+    LOGGER.debug(shore_point_feature_risk_map)
 
 
 @retrying.retry(
@@ -671,10 +710,8 @@ def clip_and_reproject_raster(
         local_bounding_box[3]+edge_buffer,
     ]
 
-    LOGGER.debug(buffered_bounding_box)
     target_pixel_size = estimate_projected_pixel_size(
         base_raster_path, bb_centroid, target_srs_wkt)
-    LOGGER.debug(target_pixel_size)
     pygeoprocessing.warp_raster(
         base_raster_path, target_pixel_size, target_raster_path,
         resample_method, target_bb=buffered_bounding_box,
