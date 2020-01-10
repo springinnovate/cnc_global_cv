@@ -302,6 +302,12 @@ def cv_grid_worker(
                 global_dem_path, local_dem_path, utm_srs.ExportToWkt(),
                 bounding_box_list, RELIEF_SAMPLE_DISTANCE, 'bilinear', True)
 
+            local_slr_path = os.path.join(
+                workspace_dir, 'slr.tif')
+            clip_and_reproject_raster(
+                global_dem_path, local_slr_path, utm_srs.ExportToWkt(),
+                bounding_box_list, 0, 'bilinear', True)
+
             shore_point_vector_path = os.path.join(
                 workspace_dir, 'shore_points.gpkg')
             sample_line_to_points(
@@ -314,6 +320,8 @@ def cv_grid_worker(
             LOGGER.info('calculate rhab on %s', workspace_dir)
             calculate_rhab(
                 shore_point_vector_path, habitat_raster_path_map, 'Rhab')
+
+            calculate_slr(shore_point_vector_path, local_slr_path, 'slr')
 
             LOGGER.debug('exiting for debugging purposes')
 
@@ -330,6 +338,70 @@ def cv_grid_worker(
                 retrying_rmtree(workspace_dir)
             else:
                 raise
+
+
+def calculate_slr(shore_point_vector_path, slr_raster_path, target_fieldname):
+    """Sample sea level rise raster and store values in shore points.
+
+    Parameters:
+        shore_point_vector_path (str): path to a vector of points in a local
+            projected coordinate system. This vector will be modified by this
+            function to include a new field called `target_fieldname`
+            containing the weighted Rhab risk for the given point.
+        slr_raster_path (str): path to a sea level rise raster indicating
+            sea level rise amout in m.
+        target_fieldname (str): fieldname to add to `shore_point_vector_path`
+            that will contain the value of sea level rise for that point.
+
+    Returns:
+        None.
+
+    """
+    try:
+        shore_point_vector = gdal.OpenEx(
+            shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
+        shore_point_layer = shore_point_vector.GetLayer()
+        slr_field = ogr.FieldDefn(target_fieldname, ogr.OFTReal)
+        slr_field.SetPrecision(5)
+        slr_field.SetWidth(24)
+        shore_point_layer.CreateField(slr_field)
+        slr_info = pygeoprocessing.get_raster_info(slr_raster_path)
+        inv_gt = gdal.InvGeoTransform(slr_info['geotransform'])
+
+        slr_raster = gdal.OpenEx(slr_raster_path, gdal.OF_RASTER)
+        slr_band = slr_raster.GetRasterBand(1)
+
+        shore_point_layer.ResetReading()
+        for point_feature in shore_point_layer:
+            point_geometry = point_feature.GetGeometryRef()
+            point_x, point_y = point_geometry.GetX(), point_geometry.GetY()
+            point_geometry = None
+
+            pixel_x, pixel_y = [
+                int(x) for x in
+                gdal.ApplyGeoTransform(inv_gt, point_x, point_y)]
+
+            try:
+                pixel_value = slr_band.ReadAsArray(
+                    xoff=pixel_x, yoff=pixel_y, win_xsize=1,
+                    win_ysize=1)[0, 0]
+            except Exception:
+                LOGGER.exception(
+                    'slr_band size %d %d', slr_band.XSize,
+                    slr_band.YSize)
+                raise
+            point_feature.SetField(target_fieldname, float(pixel_value))
+            shore_point_layer.SetFeature(point_feature)
+
+        shore_point_layer.SyncToDisk()
+        shore_point_layer = None
+        shore_point_vector = None
+        slr_raster = None
+        slr_band = None
+
+    except Exception:
+        LOGGER.exception('error in slr calc')
+        raise
 
 
 def calculate_rhab(
@@ -784,8 +856,7 @@ def clip_raster(
             'BLOCKXSIZE=256', 'BLOCKYSIZE=256'],
         outputBounds=buffered_bounding_box,
         callback=pygeoprocessing._make_logger_callback(
-            "Translate %.1f%% complete")
-)
+            "Translate %.1f%% complete"))
     base_raster = None
 
 
