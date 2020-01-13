@@ -219,16 +219,9 @@ def build_rtree(vector_path, field_to_copy=None):
     return r_tree
 
 
-# Rgeomorphology
-# Rrelief
-# Rhab
-# Rslr
-# Rwind
-# Rwave
-# Rsurge
-
 def cv_grid_worker(
         bb_work_queue,
+        global_landmass_vector_path,
         geomorphology_vector_path,
         global_dem_raster_path,
         slr_raster_path,
@@ -241,6 +234,8 @@ def cv_grid_worker(
         bb_work_queue (multiprocessing.Queue): contains
             [minx, miny, maxx, maxy] bounding box values to be processed or
             `STOP_SENTINEL` values to indicate the worker should be terminated.
+        global_landmass_vector_path (str): path to global landmass vector. Used
+            for intersecting rays to determine shoreline exposure.
         geomorphology_vector_path (str): path to line geometry geomorphology
             layer that has a field called 'SEDTYPE'
         global_dem_raster_path (str): path to a global dem raster.
@@ -255,11 +250,16 @@ def cv_grid_worker(
         None.
 
     """
+    LOGGER.info('build geomorphology rtree')
     geomorphology_rtree = build_rtree(geomorphology_vector_path, 'SEDTYPE')
     geomorphology_proj_wkt = pygeoprocessing.get_vector_info(
         geomorphology_vector_path)['projection']
     gegeomorphology_proj = osr.SpatialReference()
     gegeomorphology_proj.ImportFromWkt(geomorphology_proj_wkt)
+
+    LOGGER.info('build landmass rtree')
+    landmass_rtree = build_rtree(global_landmass_vector_path)
+
     while True:
         payload = bb_work_queue.get()
         if payload == STOP_SENTINEL:
@@ -296,6 +296,13 @@ def cv_grid_worker(
                 ogr.wkbMultiLineString, geomorphology_rtree, 'risk',
                 local_geomorphology_vector_path)
 
+            local_landmass_vector_path = os.path.join(
+                workspace_dir, 'landmass.gpkg')
+            clip_geometry(
+                bounding_box_list, wgs84_srs, utm_srs,
+                ogr.wkbPolygon, landmass_rtree, None,
+                local_landmass_vector_path)
+
             local_dem_path = os.path.join(
                 workspace_dir, 'dem.tif')
             clip_and_reproject_raster(
@@ -314,23 +321,28 @@ def cv_grid_worker(
                 local_geomorphology_vector_path, shore_point_vector_path,
                 SHORE_POINT_SAMPLE_DISTANCE)
 
+            # Rrelief
             LOGGER.info('calculate relief on %s', workspace_dir)
             calculate_relief(
                 shore_point_vector_path, local_dem_path, 'Rrelief')
             LOGGER.info('calculate rhab on %s', workspace_dir)
+            # Rhab
             calculate_rhab(
                 shore_point_vector_path, habitat_raster_path_map, 'Rhab')
 
+            # Rslr
             calculate_slr(shore_point_vector_path, local_slr_path, 'slr')
 
-            LOGGER.debug('exiting for debugging purposes')
-
-            sys.exit(0)
-
-            # Rslr
             # Rwind
             # Rwave
             # Rsurge
+            # Rgeomorphology
+
+
+
+            LOGGER.debug('exiting for debugging purposes')
+            sys.exit(0)
+
         except ValueError as e:
             if 'no data intersects this box' in str(e):
                 LOGGER.exception('error on %s', payload)
@@ -512,6 +524,9 @@ def calculate_rhab(
     shore_point_layer.CommitTransaction()
     shore_point_layer = None
     shore_point_vector = None
+    hab_effective_raster = None
+    hab_effective_band = None
+    retrying_rmtree(tmp_working_dir)
 
 
 @retrying.retry(
@@ -973,7 +988,7 @@ if __name__ == '__main__':
 
     slr_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(SLR_RASTER_URL))
-    download_global_polygon_path = task_graph.add_task(
+    download_global_landmass_vector_path = task_graph.add_task(
         func=ecoshard.download_url,
         args=(SLR_RASTER_URL, slr_raster_path),
         target_path_list=[slr_raster_path],
@@ -981,18 +996,18 @@ if __name__ == '__main__':
 
     ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
 
-    global_polygon_path = os.path.join(
+    global_landmass_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(GLOBAL_POLYGON_URL))
-    download_global_polygon_path = task_graph.add_task(
+    download_global_landmass_vector_path = task_graph.add_task(
         func=ecoshard.download_url,
-        args=(GLOBAL_POLYGON_URL, global_polygon_path),
-        target_path_list=[global_polygon_path],
-        task_name='download %s' % global_polygon_path)
+        args=(GLOBAL_POLYGON_URL, global_landmass_vector_path),
+        target_path_list=[global_landmass_vector_path],
+        task_name='download %s' % global_landmass_vector_path)
 
     shore_grid_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(SHORE_GRIDS_URL))
 
-    download_global_polygon_path = task_graph.add_task(
+    download_global_landmass_vector_path = task_graph.add_task(
         func=ecoshard.download_url,
         args=(SHORE_GRIDS_URL, shore_grid_vector_path),
         target_path_list=[shore_grid_vector_path],
@@ -1114,6 +1129,7 @@ if __name__ == '__main__':
         target=cv_grid_worker,
         args=(
             bb_work_queue,
+            global_landmass_vector_path,
             geomorphology_vector_path,
             slr_raster_path,
             global_dem_path,
@@ -1130,7 +1146,7 @@ if __name__ == '__main__':
             global_saltmarsh_vector_path,
             lulc_raster_path,
             global_wwiii_vector_path,
-            global_polygon_path,
+            global_landmass_vector_path,
             shore_grid_vector_path]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
 
