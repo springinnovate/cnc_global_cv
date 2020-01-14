@@ -24,6 +24,7 @@ from osgeo import osr
 import numpy
 import pygeoprocessing
 import retrying
+import rtree
 import shapely.geometry
 import shapely.strtree
 import shapely.wkt
@@ -191,6 +192,48 @@ def download_and_ungzip(url, target_path, buffer_size=2**20):
 
 
 def build_rtree(vector_path):
+    """Build an rtree that can be queried for nearest neighbors.
+
+    Parameters:
+        vector_path (str): path to vector of geometry to build into
+            r tree.
+
+    Returns:
+        rtree.Index object that will return shapely geometry objects with
+            a field_val_map field that contains the 'fieldname'->value pairs
+            from the original vector. The main object will also have a
+            `field_name_type_list` field which contains original
+            fieldname/field type pairs
+
+    """
+    geometry_prep_list = []
+    vector = gdal.OpenEx(vector_path, gdal.OF_VECTOR)
+    layer = vector.GetLayer()
+    layer_defn = layer.GetLayerDefn()
+    field_name_type_list = []
+    for index in range(layer_defn.GetFieldCount()):
+        field_name = layer_defn.GetFieldDefn(index).GetName()
+        field_type = layer_defn.GetFieldDefn(index).GetType()
+        field_name_type_list.append((field_name, field_type))
+
+    LOGGER.debug('loop through features for rtree')
+    for index, feature in enumerate(layer):
+        feature_geom = feature.GetGeometryRef().Clone()
+        feature_geom_shapely = shapely.wkb.loads(feature_geom.ExportToWkb())
+        field_val_map = {}
+        for field_name, _ in field_name_type_list:
+            field_val_map[field_name] = (
+                feature.GetField(field_name))
+        geometry_prep_list.append(
+            (index, feature_geom_shapely.bounds, field_val_map))
+    LOGGER.debug('constructing the tree')
+    r_tree = rtree.index.Index(geometry_prep_list)
+    LOGGER.debug('all done')
+    r_tree.field_name_type_list = field_name_type_list
+    return r_tree
+
+
+def build_strtree(vector_path):
     """Build an rtree that generates geom and preped geometry.
 
     Parameters:
@@ -267,14 +310,14 @@ def cv_grid_worker(
 
     """
     LOGGER.info('build geomorphology rtree')
-    geomorphology_rtree = build_rtree(geomorphology_vector_path)
+    geomorphology_strtree = build_strtree(geomorphology_vector_path)
     geomorphology_proj_wkt = pygeoprocessing.get_vector_info(
         geomorphology_vector_path)['projection']
     gegeomorphology_proj = osr.SpatialReference()
     gegeomorphology_proj.ImportFromWkt(geomorphology_proj_wkt)
 
     LOGGER.info('build landmass rtree')
-    landmass_rtree = build_rtree(global_landmass_vector_path)
+    landmass_strtree = build_strtree(global_landmass_vector_path)
 
     LOGGER.info('build wwiii rtree')
     wwiii_rtree = build_rtree(wwiii_vector_path)
@@ -316,14 +359,14 @@ def cv_grid_worker(
                 workspace_dir, 'geomorphology.gpkg')
             clip_geometry(
                 bounding_box_list, wgs84_srs, utm_srs,
-                ogr.wkbMultiLineString, geomorphology_rtree,
+                ogr.wkbMultiLineString, geomorphology_strtree,
                 local_geomorphology_vector_path)
 
             local_landmass_vector_path = os.path.join(
                 workspace_dir, 'landmass.gpkg')
             clip_geometry(
                 bounding_box_list, wgs84_srs, utm_srs,
-                ogr.wkbPolygon, landmass_rtree,
+                ogr.wkbPolygon, landmass_strtree,
                 local_landmass_vector_path)
 
             landmass_boundary_vector_path = os.path.join(
@@ -386,7 +429,7 @@ def cv_grid_worker(
 
 def calculate_wind(
         shore_point_vector_path, landmass_vector_path, bathymetry_raster_path,
-        wwiii_vector_path, target_fieldname):
+        wwiii_rtree, target_fieldname):
     """Calculate wind exposure for given points.
 
     Parameters:
@@ -396,8 +439,9 @@ def calculate_wind(
             will block wind exposure.
         bathymetry_raster_path (str): path to a raster indicating bathymetry
             values. (negative is deeper).
-        wwiii_vector_path (str): path to point vector that has fields
-            'REI_PCT', 'REI_V', 'WavP_[DIR]', 'WavPPCT', 'V10PCT_[DIR]'.
+        wwiii_rtree (str): path to an r_tree that can find the nearest point
+            in lat/lng whose object has values 'REI_PCT', 'REI_V',
+            'WavP_[DIR]', 'WavPPCT', 'V10PCT_[DIR]'.
 
     Returns:
         None
@@ -456,20 +500,35 @@ def calculate_wind(
     landmass_vector = None
     landmass_union_geom_prep = shapely.prepared.prep(landmass_union_geom)
 
-    landmass_rtree = build_rtree(landmass_vector_path)
+    landmass_strtree = build_strtree(landmass_vector_path)
 
     target_shore_point_layer.StartTransaction()
     temp_fetch_rays_layer.StartTransaction()
+
+    # make a transfomer for local points to lat/lng for wwiii_rtree
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    base_to_target_transform = osr.CoordinateTransformation(
+        shore_point_srs, wgs84_srs)
+
     for shore_point_feature in target_shore_point_layer:
+        shore_point_geom = shore_point_feature.GetGeometryRef().Clone()
+        error_code = shore_point_geom.Transform(base_to_target_transform)
+        wwiii_point = next(wwiii_rtree.nearest(
+            (shore_point_geom.GetX(), shore_point_geom.GetY()), 1,
+            objects='raw'))
         rei_value = 0.0
         # Iterate over every ray direction
         for sample_index in range(N_FETCH_RAYS):
             compass_degree = int(sample_index * 360 / N_FETCH_RAYS)
             compass_theta = float(sample_index) / N_FETCH_RAYS * 360
-            # rei_pct = www_point.GetField(
-            #     'REI_PCT%d' % int(compass_theta))
-            # rei_v = www_point.GetField(
-            #     'REI_V%d' % int(compass_theta))
+
+            # wwiii_point shoudl be closest point to shore point
+
+            rei_pct = wwiii_point[
+                'REI_PCT%d' % int(compass_theta)]
+            rei_v = wwiii_point[
+                'REI_V%d' % int(compass_theta)]
             cartesian_theta = -(compass_theta - 90)
 
             # Determine the direction the ray will point
@@ -516,30 +575,11 @@ def calculate_wind(
                 # original possible intersections.  Since this algorithm
                 # will be run for a long time, it's worth the additional
                 # complexity
-
-                # possible_geom_list = global_geom_rtree.query(bounding_box)
-                # LOGGER.debug('possible intersections %d', len(possible_geom_list))
-                # if not possible_geom_list:
-                #     layer = None
-                #     vector = None
-                #     raise ValueError('no data intersects this box')
-                # for geom in possible_geom_list:
-                #     clipped_line = bounding_box.intersection(geom)
-                #     clipped_line_geom = ogr.CreateGeometryFromWkb(clipped_line.wkb)
-                #     error_code = clipped_line_geom.Transform(base_to_target_transform)
-                #     if error_code:
-                #         raise RuntimeError(error_code)
-                #     feature = ogr.Feature(layer_defn)
-                #     feature.SetGeometry(clipped_line_geom.Clone())
-                #     if target_fieldname:
-                #         feature.SetField(target_fieldname, geom.field_val)
-                #     layer.CreateFeature(feature)
-
                 tested_indexes = set()
                 while True:
                     intersection = False
                     ray_envelope = ray_geometry.GetEnvelope()
-                    for landmass_line in landmass_rtree.query(
+                    for landmass_line in landmass_strtree.query(
                              shapely.geometry.box(
                                 *[ray_envelope[i] for i in [0, 2, 1, 3]])):
                         if landmass_line.id in tested_indexes:
@@ -565,11 +605,18 @@ def calculate_wind(
                 ray_feature.SetField('direction', compass_degree)
                 ray_feature.SetGeometry(ray_geometry)
                 temp_fetch_rays_layer.CreateFeature(ray_feature)
-
+                rei_value += ray_length * rei_pct * rei_v
                 ray_length = ray_geometry.Length()
-    #             bathy_values = extract_bathymetry_along_ray(
-    #                 ray_geometry, bathy_gt, bathy_nodata, bathy_band)
+                ray_feature = None
+                ray_geometry = None
 
+                shore_point_feature.SetField(
+                    'fdist_%d' % compass_degree, ray_length)
+                ray_feature = None
+                ray_geometry = None
+                rei_value += ray_length * rei_pct * rei_v
+            shore_point_feature.SetField('REI', rei_value)
+            target_shore_point_layer.SetFeature(shore_point_feature)
 
     #         # For rays of length 0, we have no bathy values
     #         # this avoids numpy's RuntimeWarning on numpy.mean([])
@@ -812,19 +859,19 @@ def calculate_utm_srs(lng, lat):
 
 def clip_geometry(
         bounding_box_coords, base_srs, target_srs, ogr_geometry_type,
-        global_geom_rtree, target_vector_path):
-    """Clip geometry in `global_geom_rtree` to bounding box.
+        global_geom_strtree, target_vector_path):
+    """Clip geometry in `global_geom_strtree` to bounding box.
 
     Parameters:
         bounding_box_coords (list): a list of bounding box coordinates in
-            the same coordinate system as the geometry in `global_geom_rtree`.
+            the same coordinate system as the geometry in `global_geom_strtree`.
         target_srs (osr.SpatialReference): target spatial reference for
             creating the target vector.
         ogr_geometry_type (ogr.wkb[TYPE]): geometry type to create for the
             target vector.
-        global_geom_rtree (shapely.str_rtree): an rtree loaded with geometry
-            to query via bounding box. Each geometry will contain parameters
-            `field_val_map` and `prep` that have values to copy to
+        global_geom_strtree (shapely.strtree.STRtree): an rtree loaded with
+            geometry to query via bounding box. Each geometry will contain
+            parameters `field_val_map` and `prep` that have values to copy to
             `target_fieldname` and used to quickly query geometry. Main object
             will have `field_name_type_list` field used to describe the
             original field name/types.
@@ -841,7 +888,7 @@ def clip_geometry(
     layer = vector.CreateLayer(
         os.path.splitext(os.path.basename(target_vector_path))[0],
         target_srs, ogr_geometry_type)
-    for field_name, field_type in global_geom_rtree.field_name_type_list:
+    for field_name, field_type in global_geom_strtree.field_name_type_list:
         layer.CreateField(ogr.FieldDefn(field_name, field_type))
     layer_defn = layer.GetLayerDefn()
     base_to_target_transform = osr.CoordinateTransformation(
@@ -849,7 +896,7 @@ def clip_geometry(
 
     bounding_box = shapely.geometry.box(*bounding_box_coords)
 
-    possible_geom_list = global_geom_rtree.query(bounding_box)
+    possible_geom_list = global_geom_strtree.query(bounding_box)
     LOGGER.debug('possible intersections %d', len(possible_geom_list))
     if not possible_geom_list:
         layer = None
@@ -863,7 +910,7 @@ def clip_geometry(
             raise RuntimeError(error_code)
         feature = ogr.Feature(layer_defn)
         feature.SetGeometry(clipped_line_geom.Clone())
-        for field_name, _ in global_geom_rtree.field_name_type_list:
+        for field_name, _ in global_geom_strtree.field_name_type_list:
             feature.SetField(
                 field_name, geom.field_val_map[field_name])
         layer.CreateFeature(feature)
@@ -1246,6 +1293,7 @@ def vector_to_lines(base_vector_path, target_line_vector_path):
     line_vector = None
     base_vector = None
     base_layer = None
+
 
 def geometry_to_lines(geometry):
     """Convert a geometry object to a list of lines."""
