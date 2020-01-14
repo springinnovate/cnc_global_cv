@@ -217,12 +217,12 @@ def build_rtree(vector_path):
         field_name_type_list.append((field_name, field_type))
 
     LOGGER.debug('loop through features for rtree')
-    for feature in layer:
+    for index, feature in enumerate(layer):
         feature_geom = feature.GetGeometryRef().Clone()
         feature_geom_shapely = shapely.wkb.loads(feature_geom.ExportToWkb())
         feature_geom_shapely.prep = shapely.prepared.prep(feature_geom_shapely)
         feature_geom_shapely.geom = feature_geom
-
+        feature_geom_shapely.id = index
         feature_geom_shapely.field_val_map = {}
         for field_name, _ in field_name_type_list:
             feature_geom_shapely.field_val_map[field_name] = (
@@ -326,6 +326,11 @@ def cv_grid_worker(
                 ogr.wkbPolygon, landmass_rtree,
                 local_landmass_vector_path)
 
+            landmass_boundary_vector_path = os.path.join(
+                workspace_dir, 'landmass_boundary.gpkg')
+            vector_to_lines(
+                local_landmass_vector_path, landmass_boundary_vector_path)
+
             local_dem_path = os.path.join(
                 workspace_dir, 'dem.tif')
             clip_and_reproject_raster(
@@ -361,7 +366,7 @@ def cv_grid_worker(
 
             # Rwind
             calculate_wind(
-                shore_point_vector_path, local_landmass_vector_path,
+                shore_point_vector_path, landmass_boundary_vector_path,
                 local_dem_path, wwiii_rtree, 'wind')
             # Rwave
             # Rsurge
@@ -534,40 +539,37 @@ def calculate_wind(
                 while True:
                     intersection = False
                     ray_envelope = ray_geometry.GetEnvelope()
-                    for landmass_poly in landmass_rtree.query(
-                            [ray_envelope[i] for i in [0, 2, 1, 3]]):
-                        if landmass_poly.geom.GetFid() in tested_indexes:
+                    for landmass_line in landmass_rtree.query(
+                             shapely.geometry.box(
+                                *[ray_envelope[i] for i in [0, 2, 1, 3]])):
+                        if landmass_line.id in tested_indexes:
                             continue
-                        tested_indexes.add(landmass_poly.geom.GetFid())
-                        if ray_geometry.Intersects(landmass_poly.prep):
-                            # if the ray intersects the poly line, test if
-                            # the intersection is closer than any known
-                            # intersection so far
-                            intersection_line = ray_geometry.Intersection(
-                                landmass_poly.geom)
-                            LOGGER.debug(intersection_line)
-
-                            # # replace the ray geometry with the new endpoint
-                            # ray_geometry = ogr.Geometry(ogr.wkbLineString)
-                            # ray_geometry.AddPoint(point_a_x, point_a_y)
-                            # ray_geometry.AddPoint(
-                            #     intersection_point.GetX(),
-                            #     intersection_point.GetY())
+                        tested_indexes.add(landmass_line.id)
+                        if ray_geometry.Intersects(landmass_line.geom):
+                            intersection_point = ray_geometry.Intersection(
+                                landmass_line.geom)
+                            # offset the dist with smallest_feature_size
+                            # update the endpoint of the ray
+                            ray_geometry = ogr.Geometry(ogr.wkbLineString)
+                            ray_geometry.AddPoint(point_a_x, point_a_y)
+                            ray_geometry.AddPoint(
+                                intersection_point.GetX(),
+                                intersection_point.GetY())
                             intersection = True
                             break
                     if not intersection:
                         break
-    #             # when we get here, we have the final ray geometry
-    #             ray_length = ray_geometry.Length()
+                # when we get here, we have the final ray geometry
+                ray_feature = ogr.Feature(temp_fetch_rays_defn)
+                ray_feature.SetField('fetch_dist', ray_length)
+                ray_feature.SetField('direction', compass_degree)
+                ray_feature.SetGeometry(ray_geometry)
+                temp_fetch_rays_layer.CreateFeature(ray_feature)
 
+                ray_length = ray_geometry.Length()
     #             bathy_values = extract_bathymetry_along_ray(
     #                 ray_geometry, bathy_gt, bathy_nodata, bathy_band)
 
-    #             ray_feature = ogr.Feature(temp_fetch_rays_defn)
-    #             ray_feature.SetField('fetch_dist', ray_length)
-    #             ray_feature.SetField('direction', compass_degree)
-    #             ray_feature.SetGeometry(ray_geometry)
-    #             temp_fetch_rays_layer.CreateFeature(ray_feature)
 
     #         # For rays of length 0, we have no bathy values
     #         # this avoids numpy's RuntimeWarning on numpy.mean([])
@@ -586,17 +588,16 @@ def calculate_wind(
     #     target_shore_point_layer.SetFeature(shore_point_feature)
     #     result_REI[shore_id] = rei_value
 
-    # target_shore_point_layer.CommitTransaction()
-    # target_shore_point_layer.SyncToDisk()
-    # target_shore_point_layer = None
-    # target_shore_point_vector = None
-    # temp_fetch_rays_layer.CommitTransaction()
-    # temp_fetch_rays_layer.SyncToDisk()
-    # temp_fetch_rays_layer = None
-    # temp_fetch_rays_vector = None
-    # bathy_raster = None
-    # bathy_band = None
-
+    target_shore_point_layer.CommitTransaction()
+    target_shore_point_layer.SyncToDisk()
+    target_shore_point_layer = None
+    target_shore_point_vector = None
+    temp_fetch_rays_layer.CommitTransaction()
+    temp_fetch_rays_layer.SyncToDisk()
+    temp_fetch_rays_layer = None
+    temp_fetch_rays_vector = None
+    bathy_raster = None
+    bathy_band = None
 
 
 def calculate_slr(shore_point_vector_path, slr_raster_path, target_fieldname):
@@ -1204,6 +1205,82 @@ def create_averaging_kernel_raster(radius_in_pixels, kernel_filepath):
     kernel_band.WriteArray(kernel_array)
     kernel_band = None
     kernel_raster = None
+
+
+def vector_to_lines(base_vector_path, target_line_vector_path):
+    """Convert polygon vector to list of lines.
+
+    Parameters:
+        base_vector_path (str): path to polygon vector.
+        target_line_vector_path (str): created by this file all polygons are
+            converted to their line boundary equivalents.
+
+    Returns:
+        None.
+
+    """
+    # explode landmass into lines for easy intersection
+    base_vector = gdal.OpenEx(base_vector_path, gdal.OF_VECTOR)
+    base_layer = base_vector.GetLayer()
+
+    gpkg_driver = ogr.GetDriverByName('GPKG')
+    line_vector = gpkg_driver.CreateDataSource(
+        target_line_vector_path)
+    line_layer = line_vector.CreateLayer(
+        target_line_vector_path, base_layer.GetSpatialRef(), ogr.wkbLineString)
+    line_vector_defn = line_layer.GetLayerDefn()
+
+    line_layer.StartTransaction()
+    for base_feature in base_layer:
+        base_shapely = shapely.wkb.loads(
+            base_feature.GetGeometryRef().ExportToWkb())
+        for line in geometry_to_lines(base_shapely):
+            segment_feature = ogr.Feature(line_vector_defn)
+            segement_geometry = ogr.Geometry(ogr.wkbLineString)
+            segement_geometry.AddPoint(*line.coords[0])
+            segement_geometry.AddPoint(*line.coords[1])
+            segment_feature.SetGeometry(segement_geometry)
+            line_layer.CreateFeature(segment_feature)
+    line_layer.CommitTransaction()
+    line_layer = None
+    line_vector = None
+    base_vector = None
+    base_layer = None
+
+def geometry_to_lines(geometry):
+    """Convert a geometry object to a list of lines."""
+    if geometry.type == 'Polygon':
+        return polygon_to_lines(geometry)
+    elif geometry.type == 'MultiPolygon':
+        line_list = []
+        for geom in geometry.geoms:
+            line_list.extend(geometry_to_lines(geom))
+        return line_list
+    else:
+        return []
+
+
+def polygon_to_lines(geometry):
+    """Return a list of shapely lines given higher order shapely geometry."""
+    line_list = []
+    last_point = geometry.exterior.coords[0]
+    for point in geometry.exterior.coords[1::]:
+        if point == last_point:
+            continue
+        line_list.append(shapely.geometry.LineString([last_point, point]))
+        last_point = point
+    line_list.append(shapely.geometry.LineString([
+        last_point, geometry.exterior.coords[0]]))
+    for interior in geometry.interiors:
+        last_point = interior.coords[0]
+        for point in interior.coords[1::]:
+            if point == last_point:
+                continue
+            line_list.append(shapely.geometry.LineString([last_point, point]))
+            last_point = point
+        line_list.append(shapely.geometry.LineString([
+            last_point, interior.coords[0]]))
+    return line_list
 
 
 if __name__ == '__main__':
