@@ -470,12 +470,15 @@ def calculate_surge(
     shore_point_vector = gdal.OpenEx(
         shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
     shore_point_layer = shore_point_vector.GetLayer()
-    shore_point_layer.CreateField(ogr.FieldDefn('surge', ogr.OFTReal))
+    shore_point_layer.CreateField(ogr.FieldDefn(surge_fieldname, ogr.OFTReal))
 
     shelf_nodata = 2
 
+    bathymetry_nodata = pygeoprocessing.get_raster_info(
+        bathymetry_raster_path)['nodata'][0]
+
     def mask_shelf(depth_array):
-        valid_mask = depth_array != nodata
+        valid_mask = ~numpy.isclose(depth_array, bathymetry_nodata)
         result_array = numpy.empty(
             depth_array.shape, dtype=numpy.int16)
         result_array[:] = shelf_nodata
@@ -559,10 +562,10 @@ def calculate_surge(
                 objects='raw', num_results=1))
         if len(nearest_point) > 0:
             distance = nearest_point[0].distance(point_shapely)
-            point_feature.SetField('surge', float(distance))
+            point_feature.SetField(surge_fieldname, float(distance))
         else:
             # so far away it's essentially not an issue
-            point_feature.SetField('surge', 0.0)
+            point_feature.SetField(surge_fieldname, 0.0)
         shore_point_layer.SetFeature(point_feature)
 
     shore_point_layer.CommitTransaction()
