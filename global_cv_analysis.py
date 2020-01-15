@@ -407,11 +407,11 @@ def cv_grid_worker(
             # Rslr
             calculate_slr(shore_point_vector_path, local_slr_path, 'slr')
 
-            # Rwind
+            # wind and wave power
             calculate_wind_and_wave(
                 shore_point_vector_path, landmass_boundary_vector_path,
-                local_dem_path, wwiii_rtree, 'wind')
-            # Rwave
+                local_dem_path, wwiii_rtree, 'rei', 'ew')
+
             # Rsurge
             # Rgeomorphology
 
@@ -429,7 +429,7 @@ def cv_grid_worker(
 
 def calculate_wind_and_wave(
         shore_point_vector_path, landmass_vector_path, bathymetry_raster_path,
-        wwiii_rtree, target_fieldname):
+        wwiii_rtree, wind_fieldname, wave_fieldname):
     """Calculate wind exposure for given points.
 
     Parameters:
@@ -442,9 +442,14 @@ def calculate_wind_and_wave(
         wwiii_rtree (str): path to an r_tree that can find the nearest point
             in lat/lng whose object has values 'REI_PCT', 'REI_V',
             'WavP_[DIR]', 'WavPPCT', 'V10PCT_[DIR]'.
+        wind_fieldname (str): fieldname to add to `shore_point_vector_path` for
+            wind power.
+        wave_fieldname (str): fieldname to add to `shore_point_vector_path` for
+            wave power.
 
     Returns:
         None
+
     """
     gpkg_driver = ogr.GetDriverByName('gpkg')
     temp_workspace_dir = tempfile.mkdtemp(
@@ -472,8 +477,10 @@ def calculate_wind_and_wave(
     target_shore_point_vector = gdal.OpenEx(
         shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
     target_shore_point_layer = target_shore_point_vector.GetLayer()
-    target_shore_point_layer.CreateField(ogr.FieldDefn('REI', ogr.OFTReal))
-    target_shore_point_layer.CreateField(ogr.FieldDefn('Ew', ogr.OFTReal))
+    target_shore_point_layer.CreateField(
+        ogr.FieldDefn(wind_fieldname, ogr.OFTReal))
+    target_shore_point_layer.CreateField(
+        ogr.FieldDefn(wave_fieldname, ogr.OFTReal))
     for ray_index in range(N_FETCH_RAYS):
         compass_degree = int(ray_index * 360 / N_FETCH_RAYS)
         target_shore_point_layer.CreateField(
@@ -662,8 +669,8 @@ def calculate_wind_and_wave(
                 ray_feature = None
                 ray_geometry = None
                 rei_value += ray_length * rei_pct * rei_v
-            shore_point_feature.SetField('REI', rei_value)
-            shore_point_feature.SetField('Ew', max(e_ocean, e_local))
+            shore_point_feature.SetField(wind_fieldname, rei_value)
+            shore_point_feature.SetField(wave_fieldname, max(e_ocean, e_local))
             target_shore_point_layer.SetFeature(shore_point_feature)
 
 
