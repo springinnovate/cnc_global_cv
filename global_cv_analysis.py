@@ -416,6 +416,9 @@ def cv_grid_worker(
             calculate_surge(shore_point_vector_path, local_dem_path, 'surge')
 
             # Rgeomorphology
+            calculate_geomorphology(
+                shore_point_vector_path, local_geomorphology_vector_path,
+                'geomorphology')
 
             LOGGER.debug('exiting for debugging purposes')
             sys.exit(0)
@@ -446,6 +449,48 @@ def make_shore_kernel(kernel_path):
     kernel_band = kernel_raster.GetRasterBand(1)
     kernel_band.SetNoDataValue(127)
     kernel_band.WriteArray(numpy.array([[1, 1, 1], [1, 9, 1], [1, 1, 1]]))
+
+
+def calculate_geomorphology(
+        shore_point_vector_path, geomorphology_vector_path,
+        geomorphology_fieldname):
+    """Sample the geomorphology vector path for the closest line to each point.
+
+    Parameters:
+        shore_point_vector_path (str):  path to a point shapefile to
+            for relief point analysis.
+        geomorphology_vector_path (str): path to a vector of lines that
+            contains the integer field 'SEDTYPE'.
+        geomorphology_fieldname (str): fieldname to add to
+            `shore_point_vector_path`.
+
+    Returns:
+        None.
+
+    """
+    shore_point_vector = gdal.OpenEx(
+        shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
+    shore_point_layer = shore_point_vector.GetLayer()
+    shore_point_layer.CreateField(
+        ogr.FieldDefn(geomorphology_fieldname, ogr.OFTReal))
+    geomorphology_strtree = build_strtree(geomorphology_vector_path)
+
+    shore_point_layer.StartTransaction()
+    for shore_point_feature in shore_point_layer:
+        shore_point_geom = shapely.wkb.loads(
+            shore_point_feature.GetGeometryRef().ExportToWkb())
+        min_dist = MAX_FETCH_DISTANCE
+        sed_type = 0
+        for line in geomorphology_strtree.query(shore_point_geom.buffer(500)):
+            cur_dist = line.distance(shore_point_geom)
+            if cur_dist < min_dist:
+                min_dist = cur_dist
+                sed_type = line.field_val_map['SEDTYPE']
+        shore_point_feature.SetField(geomorphology_fieldname, sed_type)
+        shore_point_layer.SetFeature(shore_point_feature)
+    shore_point_layer.CommitTransaction()
+    shore_point_layer = None
+    shore_point_vector = None
 
 
 def calculate_surge(
@@ -565,7 +610,7 @@ def calculate_surge(
             point_feature.SetField(surge_fieldname, float(distance))
         else:
             # so far away it's essentially not an issue
-            point_feature.SetField(surge_fieldname, 0.0)
+            point_feature.SetField(surge_fieldname, MAX_FETCH_DISTANCE)
         shore_point_layer.SetFeature(point_feature)
 
     shore_point_layer.CommitTransaction()
