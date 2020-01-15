@@ -605,7 +605,6 @@ def calculate_wind_and_wave(
                 while ray_step_loc < ray_shapely.length:
                     sample_point = ray_shapely.interpolate(ray_step_loc)
                     ray_step_loc += SHORE_POINT_SAMPLE_DISTANCE/4
-                    LOGGER.debug(tuple(sample_point.coords))
                     pixel_x, pixel_y = [int(x) for x in gdal.ApplyGeoTransform(
                         bathy_inv_gt,
                         sample_point.coords[0][0], sample_point.coords[0][1])]
@@ -616,7 +615,6 @@ def calculate_wind_and_wave(
                     bathy_values.append(
                         bathy_band.ReadAsArray(
                             pixel_x, pixel_y, 1, 1)[0][0])
-                    LOGGER.debug(bathy_values)
 
                 if bathy_values:
                     avg_bathy_value = numpy.mean(bathy_values)
@@ -635,6 +633,8 @@ def calculate_wind_and_wave(
 
                 shore_point_feature.SetField(
                     'fdist_%d' % compass_degree, ray_length)
+                shore_point_feature.SetField(
+                    'fdepth_%d' % compass_degree, float(avg_bathy_value))
                 ray_feature = None
                 ray_geometry = None
                 rei_value += ray_length * rei_pct * rei_v
