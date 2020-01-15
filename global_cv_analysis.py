@@ -92,6 +92,14 @@ SLR_RASTER_URL = (
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
     'md5_3072845759841d0b2523d00fe9518fee.tif')
 
+SEDTYPE_TO_RISK = {
+    0: 5,  # unknown
+    1: 5,  # sandy
+    2: 1,  # unerodable
+    3: 5,  # muddy
+    4: 1,  # coral/mangrove
+}
+
 # This dictionary maps landcode id to (risk, dist) tuples
 LULC_CODE_TO_HAB_MAP = {
     0: (0, None),
@@ -156,10 +164,10 @@ HABITAT_VECTOR_PATH_MAP = {
             ECOSHARD_DIR, os.path.basename(GLOBAL_MANGROVES_URL)), 1, 1000.0),
     'saltmarsh': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_SEAGRASS_URL)), 2, 1000.0),
+            ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL)), 2, 1000.0),
     'seagrass': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL)), 4, 500.0)}
+            ECOSHARD_DIR, os.path.basename(GLOBAL_SEAGRASS_URL)), 4, 500.0)}
 
 
 def download_and_unzip(url, target_dir, target_token_path):
@@ -419,9 +427,6 @@ def cv_grid_worker(
             calculate_geomorphology(
                 shore_point_vector_path, local_geomorphology_vector_path,
                 'geomorphology')
-
-            LOGGER.debug('exiting for debugging purposes')
-            sys.exit(0)
 
         except ValueError as e:
             if 'no data intersects this box' in str(e):
@@ -1716,28 +1721,6 @@ if __name__ == '__main__':
         target_path_list=[global_wwiii_vector_path],
         task_name='download %s' % global_wwiii_vector_path)
 
-    seagrass_vector_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(GLOBAL_SEAGRASS_URL))
-    download_task = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(GLOBAL_SEAGRASS_URL, seagrass_vector_path),
-        target_path_list=[seagrass_vector_path],
-        task_name='download seagrass task')
-
-    global_saltmarsh_vector_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL))
-    download_global_saltmarsh_task = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(GLOBAL_SALTMARSH_URL, global_saltmarsh_vector_path),
-        target_path_list=[global_saltmarsh_vector_path],
-        task_name='download global saltmarsh')
-
-    mangroves_vector_path = os.path.join(
-        ECOSHARD_DIR, 'GMW_001_GlobalMangroveWatch_2016', '01_Data',
-        'GMW_2016_v2.shp')
-    reefs_vector_path = os.path.join(
-        ECOSHARD_DIR, 'Reefs', 'reef_500_poly.shp')
-    geomorphology_vector_path = os.path.join(ECOSHARD_DIR, 'Sediments.shp')
     lulc_raster_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
 
@@ -1825,11 +1808,6 @@ if __name__ == '__main__':
 
     for path in [
             ls_population_raster_path,
-            geomorphology_vector_path,
-            reefs_vector_path,
-            mangroves_vector_path,
-            seagrass_vector_path,
-            global_saltmarsh_vector_path,
             lulc_raster_path,
             global_wwiii_vector_path,
             global_landmass_vector_path,
