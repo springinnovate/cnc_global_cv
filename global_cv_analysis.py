@@ -413,6 +413,8 @@ def cv_grid_worker(
                 local_dem_path, wwiii_rtree, 'rei', 'ew')
 
             # Rsurge
+            calculate_surge(shore_point_vector_path, local_dem_path, 'surge')
+
             # Rgeomorphology
 
             LOGGER.debug('exiting for debugging purposes')
@@ -425,6 +427,148 @@ def cv_grid_worker(
                 retrying_rmtree(workspace_dir)
             else:
                 raise
+
+
+def make_shore_kernel(kernel_path):
+    """Make a 3x3 raster with a 9 in the middle and 1s on the outside."""
+    driver = gdal.GetDriverByName('GTiff')
+    kernel_raster = driver.Create(
+        kernel_path.encode('utf-8'), 3, 3, 1,
+        gdal.GDT_Byte)
+
+    # Make some kind of geotransform, it doesn't matter what but
+    # will make GIS libraries behave better if it's all defined
+    kernel_raster.SetGeoTransform([0, 1, 0, 0, 0, -1])
+    srs = osr.SpatialReference()
+    srs.SetWellKnownGeogCS('WGS84')
+    kernel_raster.SetProjection(srs.ExportToWkt())
+
+    kernel_band = kernel_raster.GetRasterBand(1)
+    kernel_band.SetNoDataValue(127)
+    kernel_band.WriteArray(numpy.array([[1, 1, 1], [1, 9, 1], [1, 1, 1]]))
+
+
+def calculate_surge(
+        shore_point_vector_path, bathymetry_raster_path, surge_fieldname):
+    """Calculate surge potential as distance to continental shelf (-150m).
+
+    Parameters:
+        base_shore_point_vector_path (string):  path to a point shapefile to
+            for relief point analysis.
+        global_dem_path (string): path to a DEM raster projected in wgs84.
+        surge_fieldname (str): fieldname to add to `shore_point_vector_path`
+        workspace_dir (string): path to a directory to make local calculations
+            in
+        target_surge_point_vector_path (string): path to output vector.
+            after completion will a value for closest distance to continental
+            shelf called 'surge'.
+
+    Returns:
+        None.
+
+    """
+    shore_point_vector = gdal.OpenEx(
+        shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
+    shore_point_layer = shore_point_vector.GetLayer()
+    shore_point_layer.CreateField(ogr.FieldDefn('surge', ogr.OFTReal))
+
+    shelf_nodata = 2
+
+    def mask_shelf(depth_array):
+        valid_mask = depth_array != nodata
+        result_array = numpy.empty(
+            depth_array.shape, dtype=numpy.int16)
+        result_array[:] = shelf_nodata
+        result_array[valid_mask] = 0
+        result_array[depth_array < -150] = 1
+        return result_array
+
+    workspace_dir = os.path.dirname(shore_point_vector_path)
+
+    shelf_mask_path = os.path.join(workspace_dir, 'shelf_mask.tif')
+    pygeoprocessing.raster_calculator(
+        [(bathymetry_raster_path, 1)], mask_shelf,
+        shelf_mask_path, gdal.GDT_Byte, shelf_nodata)
+
+    # convolve to find edges
+    # grid shoreline from raster
+    shelf_kernel_path = os.path.join(workspace_dir, 'shelf_kernel.tif')
+    shelf_convoultion_raster_path = os.path.join(
+        workspace_dir, 'shelf_convolution.tif')
+    make_shore_kernel(shelf_kernel_path)
+    pygeoprocessing.convolve_2d(
+        (shelf_mask_path, 1), (shelf_kernel_path, 1),
+        shelf_convoultion_raster_path, target_datatype=gdal.GDT_Byte,
+        target_nodata=255)
+
+    nodata = pygeoprocessing.get_raster_info(
+        shelf_convoultion_raster_path)['nodata'][0]
+
+    def _shelf_mask_op(shelf_convolution):
+        """Mask values on land that border the continental shelf."""
+        result = numpy.empty(shelf_convolution.shape, dtype=numpy.uint8)
+        result[:] = nodata
+        valid_mask = shelf_convolution != nodata
+        # If a pixel is on land, it gets at least a 9, but if it's all on
+        # land it gets an 17 (8 neighboring pixels), so we search between 9
+        # and 17 to determine a shore pixel
+        result[valid_mask] = numpy.where(
+            (shelf_convolution[valid_mask] >= 9) &
+            (shelf_convolution[valid_mask] < 17), 1, nodata)
+        return result
+
+    shelf_edge_raster_path = os.path.join(workspace_dir, 'shelf_edge.tif')
+    pygeoprocessing.raster_calculator(
+        [(shelf_convoultion_raster_path, 1)], _shelf_mask_op,
+        shelf_edge_raster_path, gdal.GDT_Byte, nodata)
+
+    shore_geotransform = pygeoprocessing.get_raster_info(
+        shelf_edge_raster_path)['geotransform']
+
+    shelf_rtree = rtree.index.Index()
+
+    for offset_info, data_block in pygeoprocessing.iterblocks(
+            (shelf_edge_raster_path, 1)):
+        row_indexes, col_indexes = numpy.mgrid[
+            offset_info['yoff']:offset_info['yoff']+offset_info['win_ysize'],
+            offset_info['xoff']:offset_info['xoff']+offset_info['win_xsize']]
+        valid_mask = data_block == 1
+        x_coordinates = (
+            shore_geotransform[0] +
+            shore_geotransform[1] * (col_indexes[valid_mask] + 0.5) +
+            shore_geotransform[2] * (row_indexes[valid_mask] + 0.5))
+        y_coordinates = (
+            shore_geotransform[3] +
+            shore_geotransform[4] * (col_indexes[valid_mask] + 0.5) +
+            shore_geotransform[5] * (row_indexes[valid_mask] + 0.5))
+
+        for x_coord, y_coord in zip(x_coordinates, y_coordinates):
+            shelf_rtree.insert(
+                0, [x_coord, y_coord, x_coord, y_coord],
+                obj=shapely.geometry.Point(x_coord, y_coord))
+
+    shore_point_layer.StartTransaction()
+    for point_feature in shore_point_layer:
+        point_geometry = point_feature.GetGeometryRef()
+        point_shapely = shapely.wkb.loads(point_geometry.ExportToWkb())
+        nearest_point = list(shelf_rtree.nearest(
+                (point_geometry.GetX(),
+                 point_geometry.GetY(),
+                 point_geometry.GetX(),
+                 point_geometry.GetY()),
+                objects='raw', num_results=1))
+        if len(nearest_point) > 0:
+            distance = nearest_point[0].distance(point_shapely)
+            point_feature.SetField('surge', float(distance))
+        else:
+            # so far away it's essentially not an issue
+            point_feature.SetField('surge', 0.0)
+        shore_point_layer.SetFeature(point_feature)
+
+    shore_point_layer.CommitTransaction()
+    shore_point_layer.SyncToDisk()
+    shore_point_layer = None
+    shore_point_vector = None
 
 
 def calculate_wind_and_wave(
