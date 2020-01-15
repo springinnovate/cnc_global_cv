@@ -51,21 +51,6 @@ GLOBAL_POLYGON_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_global_polygon_simplified_geometries_'
     'md5_653118dde775057e24de52542b01eaee.gpkg')
-GLOBAL_GEOMORPHOLOGY_ZIP_URL = (
-    ECOSHARD_BUCKET_URL + 'SedType_md5_d670148183cc7f817e26570e77ca3449.zip')
-
-GLOBAL_REEFS_URL = (
-    ECOSHARD_BUCKET_URL +
-    'ipbes-cv_reef_md5_5a90d55a505813b5aa9662faee351bf8.tif')
-GLOBAL_MANGROVES_URL = (
-    ECOSHARD_BUCKET_URL +
-    'ipbes-cv_mangrove_md5_2205f546ab3eb92f9901b3e57258b998.tif')
-GLOBAL_SEAGRASS_URL = (
-    ECOSHARD_BUCKET_URL +
-    'ipbes-cv_seagrass_md5_a9cc6d922d2e74a14f74b4107c94a0d6.tif')
-GLOBAL_SALTMARSH_URL = (
-    ECOSHARD_BUCKET_URL +
-    'ipbes-cv_saltmarsh_md5_203d8600fd4b6df91f53f66f2a011bcd.tif')
 
 LULC_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
@@ -74,7 +59,7 @@ LULC_RASTER_URL = (
 BUFFER_VECTOR_URL = (
     ECOSHARD_BUCKET_URL +
     'buffered_global_shore_5km_md5_a68e1049c1c03673add014cd29b7b368.gpkg')
-SHORE_GRIDS_URL = (
+SHORE_GRID_URL = (
     ECOSHARD_BUCKET_URL +
     'shore_grid_md5_1a09b69c0c548d3b25d7e14c3ddb60c9.gpkg')
 
@@ -91,6 +76,34 @@ SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
     'md5_3072845759841d0b2523d00fe9518fee.tif')
+GLOBAL_GEOMORPHOLOGY_URL = (
+    ECOSHARD_BUCKET_URL +
+    'geomorphology_md5_ace4406c75459c56f158c9f5a4636897.gpkg')
+GLOBAL_REEFS_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_reef_md5_5a90d55a505813b5aa9662faee351bf8.tif')
+GLOBAL_MANGROVES_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_mangrove_md5_2205f546ab3eb92f9901b3e57258b998.tif')
+GLOBAL_SEAGRASS_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_seagrass_md5_a9cc6d922d2e74a14f74b4107c94a0d6.tif')
+GLOBAL_SALTMARSH_URL = (
+    ECOSHARD_BUCKET_URL +
+    'ipbes-cv_saltmarsh_md5_203d8600fd4b6df91f53f66f2a011bcd.tif')
+
+GLOBAL_DATA_URL_MAP = {
+    'geomorphology': GLOBAL_GEOMORPHOLOGY_URL,
+    'mangroves': GLOBAL_MANGROVES_URL,
+    'reefs': GLOBAL_REEFS_URL,
+    'seagrass': GLOBAL_SEAGRASS_URL,
+    'saltmarsh': GLOBAL_SALTMARSH_URL,
+    'dem': GLOBAL_DEM_URL,
+    'slr': SLR_RASTER_URL,
+    'landmass': GLOBAL_POLYGON_URL,
+    'shore_grid': SHORE_GRID_URL,
+    'lulc': LULC_RASTER_URL
+    }
 
 SEDTYPE_TO_RISK = {
     0: 5,  # unknown
@@ -157,17 +170,21 @@ STOP_SENTINEL = 'STOP'
 
 HABITAT_VECTOR_PATH_MAP = {
     'reefs': (
-        os.path.join(ECOSHARD_DIR, os.path.basename(GLOBAL_REEFS_URL)), 1,
-        2000.0),
+        os.path.join(
+            ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['reefs'])),
+        1, 2000.0),
     'mangroves': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_MANGROVES_URL)), 1, 1000.0),
+            ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['mangroves'])),
+        1, 1000.0),
     'saltmarsh': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_SALTMARSH_URL)), 2, 1000.0),
+            ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['saltmarsh'])),
+        2, 1000.0),
     'seagrass': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_SEAGRASS_URL)), 4, 500.0)}
+            ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['seagrass'])),
+        4, 500.0)}
 
 
 def download_and_unzip(url, target_dir, target_token_path):
@@ -426,7 +443,7 @@ def cv_grid_worker(
             # Rgeomorphology
             calculate_geomorphology(
                 shore_point_vector_path, local_geomorphology_vector_path,
-                'geomorphology')
+                'Rgeomorphology')
 
         except ValueError as e:
             if 'no data intersects this box' in str(e):
@@ -485,13 +502,13 @@ def calculate_geomorphology(
         shore_point_geom = shapely.wkb.loads(
             shore_point_feature.GetGeometryRef().ExportToWkb())
         min_dist = MAX_FETCH_DISTANCE
-        sed_type = 0
+        geo_risk = 5
         for line in geomorphology_strtree.query(shore_point_geom.buffer(500)):
             cur_dist = line.distance(shore_point_geom)
             if cur_dist < min_dist:
                 min_dist = cur_dist
-                sed_type = line.field_val_map['SEDTYPE']
-        shore_point_feature.SetField(geomorphology_fieldname, sed_type)
+                geo_risk = line.field_val_map['Rgeo']
+        shore_point_feature.SetField(geomorphology_fieldname, geo_risk)
         shore_point_layer.SetFeature(shore_point_feature)
     shore_point_layer.CommitTransaction()
     shore_point_layer = None
@@ -1656,8 +1673,7 @@ if __name__ == '__main__':
 
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
 
-    for zip_url in [
-            GLOBAL_GEOMORPHOLOGY_ZIP_URL, LS_POPULATION_URL]:
+    for zip_url in [LS_POPULATION_URL]:
         target_token_path = os.path.join(
             CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
         download_and_unzip_task = task_graph.add_task(
@@ -1666,9 +1682,9 @@ if __name__ == '__main__':
             target_path_list=[target_token_path],
             task_name='download and unzip %s' % zip_url)
 
-    for ecoshard_url in [
-            GLOBAL_MANGROVES_URL, GLOBAL_REEFS_URL, GLOBAL_SEAGRASS_URL,
-            GLOBAL_SALTMARSH_URL]:
+    local_data_path_map = {}
+
+    for data_id, ecoshard_url in GLOBAL_DATA_URL_MAP.items():
         local_ecoshard_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(ecoshard_url))
         download_task = task_graph.add_task(
@@ -1676,41 +1692,9 @@ if __name__ == '__main__':
             args=(ecoshard_url, local_ecoshard_path),
             target_path_list=[local_ecoshard_path],
             task_name='download %s' % local_ecoshard_path)
-
-    slr_raster_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(SLR_RASTER_URL))
-    download_global_landmass_vector_path = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(SLR_RASTER_URL, slr_raster_path),
-        target_path_list=[slr_raster_path],
-        task_name='download %s' % slr_raster_path)
+        local_data_path_map[data_id] = local_ecoshard_path
 
     ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
-
-    global_landmass_vector_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(GLOBAL_POLYGON_URL))
-    download_global_landmass_vector_path = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(GLOBAL_POLYGON_URL, global_landmass_vector_path),
-        target_path_list=[global_landmass_vector_path],
-        task_name='download %s' % global_landmass_vector_path)
-
-    shore_grid_vector_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(SHORE_GRIDS_URL))
-
-    download_global_landmass_vector_path = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(SHORE_GRIDS_URL, shore_grid_vector_path),
-        target_path_list=[shore_grid_vector_path],
-        task_name='download %s' % shore_grid_vector_path)
-
-    global_dem_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_URL))
-    download_global_dem_task = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(GLOBAL_DEM_URL, global_dem_path),
-        target_path_list=[global_dem_path],
-        task_name='download %s' % global_dem_path)
 
     global_wwiii_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(
@@ -1721,15 +1705,6 @@ if __name__ == '__main__':
         target_path_list=[global_wwiii_vector_path],
         task_name='download %s' % global_wwiii_vector_path)
 
-    lulc_raster_path = os.path.join(
-        ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
-
-    download_lulc_task = task_graph.add_task(
-        func=ecoshard.download_url,
-        args=(LULC_RASTER_URL, lulc_raster_path),
-        target_path_list=[lulc_raster_path],
-        task_name='download lulc raster')
-
     shore_buffer_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(BUFFER_VECTOR_URL))
     download_buffer_task = task_graph.add_task(
@@ -1738,15 +1713,17 @@ if __name__ == '__main__':
         target_path_list=[shore_buffer_vector_path],
         task_name='download global_vector')
 
+    task_graph.join()  # wait for everything to download
+
     lulc_shore_mask_raster_path = os.path.join(
         CHURN_DIR, 'lulc_masked_by_shore.tif')
     mask_lulc_by_shore_task = task_graph.add_task(
         func=pygeoprocessing.mask_raster,
-        args=((lulc_raster_path, 1), shore_buffer_vector_path,
+        args=((local_data_path_map['lulc'], 1), shore_buffer_vector_path,
               lulc_shore_mask_raster_path),
         target_path_list=[lulc_shore_mask_raster_path],
         ignore_path_list=[shore_buffer_vector_path],  # ignore mod by opening
-        dependent_task_list=[download_buffer_task, download_lulc_task],
+        dependent_task_list=[download_buffer_task],
         task_name='mask shore')
 
     # each value in `risk_distance_to_lulc_code` can be lumped into one
@@ -1786,10 +1763,13 @@ if __name__ == '__main__':
             risk_distance_mask_path, risk_distance_tuple[0],
             risk_distance_tuple[1])
 
+    # TODO: merge mangroves and onshore forest
+
     task_graph.join()
     task_graph.close()
 
-    shore_grid_vector = gdal.OpenEx(shore_grid_vector_path, gdal.OF_VECTOR)
+    shore_grid_vector = gdal.OpenEx(
+        local_data_path_map['shore_grid'], gdal.OF_VECTOR)
     shore_grid_layer = shore_grid_vector.GetLayer()
 
     bb_work_queue = multiprocessing.Queue()
@@ -1798,23 +1778,24 @@ if __name__ == '__main__':
         target=cv_grid_worker,
         args=(
             bb_work_queue,
-            r"C:\Users\richp\Documents\code_repos\cnc\cnc_global_cv\global_cv_workspace\test_data\local_land.gpkg", #global_landmass_vector_path,
-            r"C:\Users\richp\Documents\code_repos\cnc\cnc_global_cv\global_cv_workspace\test_data\local_geomorph.gpkg", #geomorphology_vector_path,
-            slr_raster_path,
-            global_dem_path,
+            local_data_path_map['landmass'],
+            local_data_path_map['geomorphology'],
+            local_data_path_map['slr'],
+            local_data_path_map['dem'],
             r"C:\Users\richp\Documents\code_repos\cnc\cnc_global_cv\global_cv_workspace\test_data\local_wwiii.gpkg", #global_wwiii_vector_path,
             habitat_raster_risk_map,
             ))
 
     for path in [
             ls_population_raster_path,
-            lulc_raster_path,
+            local_data_path_map['lulc'],
             global_wwiii_vector_path,
-            global_landmass_vector_path,
-            shore_grid_vector_path]:
+            local_data_path_map['landmass'],
+            local_data_path_map['shore_grid']]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
 
-    shore_grid_vector = gdal.OpenEx(shore_grid_vector_path, gdal.OF_VECTOR)
+    shore_grid_vector = gdal.OpenEx(
+        local_data_path_map['shore_grid'], gdal.OF_VECTOR)
     shore_grid_layer = shore_grid_vector.GetLayer()
 
     for index, shore_grid_feature in enumerate(shore_grid_layer):
