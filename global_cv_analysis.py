@@ -408,7 +408,7 @@ def cv_grid_worker(
             calculate_slr(shore_point_vector_path, local_slr_path, 'slr')
 
             # Rwind
-            calculate_wind(
+            calculate_wind_and_wave(
                 shore_point_vector_path, landmass_boundary_vector_path,
                 local_dem_path, wwiii_rtree, 'wind')
             # Rwave
@@ -427,7 +427,7 @@ def cv_grid_worker(
                 raise
 
 
-def calculate_wind(
+def calculate_wind_and_wave(
         shore_point_vector_path, landmass_vector_path, bathymetry_raster_path,
         wwiii_rtree, target_fieldname):
     """Calculate wind exposure for given points.
@@ -482,13 +482,13 @@ def calculate_wind(
 
     # Iterate over every shore point
     LOGGER.info("Casting rays and extracting bathymetry values")
-    result_REI = {}
     bathy_raster = gdal.OpenEx(
         bathymetry_raster_path, gdal.OF_RASTER | gdal.GA_ReadOnly)
     bathy_band = bathy_raster.GetRasterBand(1)
     bathy_raster_info = pygeoprocessing.get_raster_info(bathymetry_raster_path)
     bathy_gt = bathy_raster_info['geotransform']
-    bathy_nodata = bathy_raster_info['nodata']
+    bathy_nodata = bathy_raster_info['nodata'][0]
+    bathy_inv_gt = gdal.InvGeoTransform(bathy_gt)
 
     landmass_vector = gdal.OpenEx(landmass_vector_path, gdal.OF_VECTOR)
     landmass_layer = landmass_vector.GetLayer()
@@ -513,7 +513,7 @@ def calculate_wind(
 
     for shore_point_feature in target_shore_point_layer:
         shore_point_geom = shore_point_feature.GetGeometryRef().Clone()
-        error_code = shore_point_geom.Transform(base_to_target_transform)
+        _ = shore_point_geom.Transform(base_to_target_transform)
         wwiii_point = next(wwiii_rtree.nearest(
             (shore_point_geom.GetX(), shore_point_geom.GetY()), 1,
             objects='raw'))
@@ -562,8 +562,6 @@ def calculate_wind(
             ray_point_origin_shapely = shapely.geometry.Point(
                 point_a_x, point_a_y)
 
-            ray_length = 0.0
-            bathy_values = []
             if not landmass_union_geom_prep.intersects(
                     ray_point_origin_shapely):
                 # the origin is in ocean, so we'll get a ray length > 0.0
@@ -599,13 +597,38 @@ def calculate_wind(
                             break
                     if not intersection:
                         break
+
+                ray_step_loc = 0.0
+                bathy_values = []
+                # walk along ray
+                ray_shapely = shapely.wkb.loads(ray_geometry.ExportToWkb())
+                while ray_step_loc < ray_shapely.length:
+                    sample_point = ray_shapely.interpolate(ray_step_loc)
+                    ray_step_loc += SHORE_POINT_SAMPLE_DISTANCE/4
+                    LOGGER.debug(tuple(sample_point.coords))
+                    pixel_x, pixel_y = [int(x) for x in gdal.ApplyGeoTransform(
+                        bathy_inv_gt,
+                        sample_point.coords[0][0], sample_point.coords[0][1])]
+                    if (pixel_x < 0 or pixel_y < 0 or
+                            pixel_x >= bathy_band.XSize or
+                            pixel_y >= bathy_band.YSize):
+                        continue
+                    bathy_values.append(
+                        bathy_band.ReadAsArray(
+                            pixel_x, pixel_y, 1, 1)[0][0])
+                    LOGGER.debug(bathy_values)
+
+                if bathy_values:
+                    avg_bathy_value = numpy.mean(bathy_values)
+                else:
+                    avg_bathy_value = 0.0
                 # when we get here, we have the final ray geometry
                 ray_feature = ogr.Feature(temp_fetch_rays_defn)
-                ray_feature.SetField('fetch_dist', ray_length)
+                ray_feature.SetField('fetch_dist', ray_shapely.length)
                 ray_feature.SetField('direction', compass_degree)
                 ray_feature.SetGeometry(ray_geometry)
                 temp_fetch_rays_layer.CreateFeature(ray_feature)
-                rei_value += ray_length * rei_pct * rei_v
+                rei_value += ray_shapely.length * rei_pct * rei_v
                 ray_length = ray_geometry.Length()
                 ray_feature = None
                 ray_geometry = None
