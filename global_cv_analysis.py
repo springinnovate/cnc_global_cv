@@ -473,6 +473,7 @@ def calculate_wind_and_wave(
         shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
     target_shore_point_layer = target_shore_point_vector.GetLayer()
     target_shore_point_layer.CreateField(ogr.FieldDefn('REI', ogr.OFTReal))
+    target_shore_point_layer.CreateField(ogr.FieldDefn('Ew', ogr.OFTReal))
     for ray_index in range(N_FETCH_RAYS):
         compass_degree = int(ray_index * 360 / N_FETCH_RAYS)
         target_shore_point_layer.CreateField(
@@ -518,6 +519,10 @@ def calculate_wind_and_wave(
             (shore_point_geom.GetX(), shore_point_geom.GetY()), 1,
             objects='raw'))
         rei_value = 0.0
+        height_list = []
+        period_list = []
+        e_local = 0.0
+        e_ocean = 0.0
         # Iterate over every ray direction
         for sample_index in range(N_FETCH_RAYS):
             compass_degree = int(sample_index * 360 / N_FETCH_RAYS)
@@ -635,11 +640,32 @@ def calculate_wind_and_wave(
                     'fdist_%d' % compass_degree, ray_length)
                 shore_point_feature.SetField(
                     'fdepth_%d' % compass_degree, float(avg_bathy_value))
+
+                velocity = wwiii_point['V10PCT_%d' % compass_degree]
+                occurrence = wwiii_point['REI_PCT%d' % compass_degree]
+
+                height = compute_wave_height(
+                    velocity, ray_shapely.length, avg_bathy_value)
+                height_list.append(height)
+                period = compute_wave_period(
+                    velocity, ray_shapely.length, avg_bathy_value)
+                period_list.append(period)
+                power = 0.5 * float(height)**2 * float(period)  # UG Eq. 8
+                e_local += power * occurrence  # UG Eq. 9
+
+                if intersection:
+                    e_ocean += (
+                        wwiii_point['WavP_%d' % compass_degree] *
+                        wwiii_point['WavPPCT%d' % compass_degree])
+
+
                 ray_feature = None
                 ray_geometry = None
                 rei_value += ray_length * rei_pct * rei_v
             shore_point_feature.SetField('REI', rei_value)
+            shore_point_feature.SetField('Ew', max(e_ocean, e_local))
             target_shore_point_layer.SetFeature(shore_point_feature)
+
 
     #         # For rays of length 0, we have no bathy values
     #         # this avoids numpy's RuntimeWarning on numpy.mean([])
@@ -1352,6 +1378,68 @@ def polygon_to_lines(geometry):
         line_list.append(shapely.geometry.LineString([
             last_point, interior.coords[0]]))
     return line_list
+
+
+def compute_wave_height(Un, Fn, dn):
+    """Compute Wave Height by User Guide eq 10.
+
+    This equation may not be suitable for wind speed values < 1 m/s
+    The WWIII database tends to include some 0s, otherwise values > 2.
+
+    Parameters:
+        Un (float): wind velocity in meters per second.
+        Fn (float): fetch ray length in meters.
+        dn (float): water depth in negative meters.
+
+    Returns:
+        Float: Wave height in meters
+
+    """
+    if Un < 1.0:
+        LOGGER.warning(
+            'Found wind velocity of %.2f, '
+            'using 1.0m/s in wave height calculation instead' % Un)
+        Un = 1.0
+    g = 9.81
+    dn = -dn
+    ds = g*dn/Un**2
+    Fs = g*Fn/Un**2
+    A = numpy.tanh(0.343*ds**1.14)
+    B = numpy.tanh(4.41e-4*Fs**0.79/A)
+    H_n = (0.24*Un**2/g)*(A*B)**0.572
+    return H_n
+
+
+def compute_wave_period(Un, Fn, dn):
+    """Compute Wave Period by User Guide eq 10.
+
+    This equation may not be suitable for wind speed values < 1 m/s
+    The WWIII database tends to include some 0s, otherwise values > 2.
+
+    Parameters:
+        Un (float): wind velocity in meters per second.
+        Fn (float): fetch ray length in meters.
+        dn (float): water depth in negative meters.
+
+    Returns:
+        Float: Wave period in seconds
+
+    """
+    # This equation may not be suitable for wind speed values < 1 m/s
+    # The WWIII database tends to include some 0s, otherwise values > 2
+    if Un < 1.0:
+        LOGGER.warning(
+            'Found wind velocity of %.2f, '
+            'using 1.0m/s in wave height calculation instead' % Un)
+        Un = 1.0
+    g = 9.81
+    dn = -dn
+    ds = g*dn/Un**2
+    Fs = g*Fn/Un**2
+    A = numpy.tanh(0.1*ds**2.01)
+    B = numpy.tanh(2.77e-7*Fs**1.45/A)
+    T_n = 7.69*Un/g*(A*B)**0.187
+    return T_n
 
 
 if __name__ == '__main__':
