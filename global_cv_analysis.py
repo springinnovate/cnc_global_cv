@@ -36,6 +36,8 @@ ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'grid_workspaces')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 TARGET_NODATA = -1
+TARGET_CV_VECTOR_PATH = os.path.join(
+    WORKSPACE_DIR, 'global_cv_analysis_result.gpkg')
 
 # [minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
@@ -66,39 +68,39 @@ SHORE_GRID_URL = (
 GLOBAL_WWIII_GZ_URL = (
     ECOSHARD_BUCKET_URL +
     'wave_watch_iii_md5_c8bb1ce4739e0a27ee608303c217ab5b.gpkg.gz')
-GLOBAL_DEM_URL = (
+GLOBAL_DEM_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
-LS_POPULATION_URL = (
+LS_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
 SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
     'md5_3072845759841d0b2523d00fe9518fee.tif')
-GLOBAL_GEOMORPHOLOGY_URL = (
+GLOBAL_GEOMORPHOLOGY_VECTOR_URL = (
     ECOSHARD_BUCKET_URL +
     'geomorphology_md5_ace4406c75459c56f158c9f5a4636897.gpkg')
-GLOBAL_REEFS_URL = (
+GLOBAL_REEFS_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_reef_md5_5a90d55a505813b5aa9662faee351bf8.tif')
-GLOBAL_MANGROVES_URL = (
+GLOBAL_MANGROVES_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'ipbes-cv_mangrove_md5_2205f546ab3eb92f9901b3e57258b998.tif')
-GLOBAL_SEAGRASS_URL = (
+    'ipbes-cv_mangrove_md5_0ec85cb51dab3c9ec3215783268111cc.tif')
+GLOBAL_SEAGRASS_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_seagrass_md5_a9cc6d922d2e74a14f74b4107c94a0d6.tif')
-GLOBAL_SALTMARSH_URL = (
+GLOBAL_SALTMARSH_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_saltmarsh_md5_203d8600fd4b6df91f53f66f2a011bcd.tif')
 
 GLOBAL_DATA_URL_MAP = {
-    'geomorphology': GLOBAL_GEOMORPHOLOGY_URL,
-    'mangroves': GLOBAL_MANGROVES_URL,
-    'reefs': GLOBAL_REEFS_URL,
-    'seagrass': GLOBAL_SEAGRASS_URL,
-    'saltmarsh': GLOBAL_SALTMARSH_URL,
-    'dem': GLOBAL_DEM_URL,
+    'geomorphology': GLOBAL_GEOMORPHOLOGY_VECTOR_URL,
+    'mangroves': GLOBAL_MANGROVES_RASTER_URL,
+    'reefs': GLOBAL_REEFS_RASTER_URL,
+    'seagrass': GLOBAL_SEAGRASS_RASTER_URL,
+    'saltmarsh': GLOBAL_SALTMARSH_RASTER_URL,
+    'dem': GLOBAL_DEM_RASTER_URL,
     'slr': SLR_RASTER_URL,
     'landmass': GLOBAL_POLYGON_URL,
     'shore_grid': SHORE_GRID_URL,
@@ -305,6 +307,7 @@ def build_strtree(vector_path):
 
 def cv_grid_worker(
         bb_work_queue,
+        cv_point_complete_queue,
         global_landmass_vector_path,
         geomorphology_vector_path,
         slr_raster_path,
@@ -318,6 +321,9 @@ def cv_grid_worker(
         bb_work_queue (multiprocessing.Queue): contains
             [minx, miny, maxx, maxy] bounding box values to be processed or
             `STOP_SENTINEL` values to indicate the worker should be terminated.
+        cv_point_complete_queue (multiprocessing.Queue): this queue is used to
+            pass completed CV point vectors for further processing. It will be
+            terminated by `STOP_SENTINEL`.
         global_landmass_vector_path (str): path to global landmass vector. Used
             for intersecting rays to determine shoreline exposure.
         geomorphology_vector_path (str): path to line geometry geomorphology
@@ -444,6 +450,9 @@ def cv_grid_worker(
             calculate_geomorphology(
                 shore_point_vector_path, local_geomorphology_vector_path,
                 'Rgeomorphology')
+
+            LOGGER.info('completed %s', shore_point_vector_path)
+            cv_point_complete_queue.put(shore_point_vector_path)
 
         except ValueError as e:
             if 'no data intersects this box' in str(e):
@@ -709,7 +718,6 @@ def calculate_wind_and_wave(
     bathy_band = bathy_raster.GetRasterBand(1)
     bathy_raster_info = pygeoprocessing.get_raster_info(bathymetry_raster_path)
     bathy_gt = bathy_raster_info['geotransform']
-    bathy_nodata = bathy_raster_info['nodata'][0]
     bathy_inv_gt = gdal.InvGeoTransform(bathy_gt)
 
     landmass_vector = gdal.OpenEx(landmass_vector_path, gdal.OF_VECTOR)
@@ -879,31 +887,12 @@ def calculate_wind_and_wave(
                         wwiii_point['WavP_%d' % compass_degree] *
                         wwiii_point['WavPPCT%d' % compass_degree])
 
-
                 ray_feature = None
                 ray_geometry = None
                 rei_value += ray_length * rei_pct * rei_v
             shore_point_feature.SetField(wind_fieldname, rei_value)
             shore_point_feature.SetField(wave_fieldname, max(e_ocean, e_local))
             target_shore_point_layer.SetFeature(shore_point_feature)
-
-
-    #         # For rays of length 0, we have no bathy values
-    #         # this avoids numpy's RuntimeWarning on numpy.mean([])
-    #         if not bathy_values:
-    #             avg_fetch_depth = numpy.nan
-    #         else:
-    #             avg_fetch_depth = numpy.mean(bathy_values)
-    #         shore_point_feature.SetField(
-    #             'fdist_%d' % compass_degree, float(ray_length))
-    #         shore_point_feature.SetField(
-    #             'fdepth_%d' % compass_degree, float(avg_fetch_depth))
-    #         ray_feature = None
-    #         ray_geometry = None
-    #         rei_value += ray_length * rei_pct * rei_v
-    #     shore_point_feature.SetField('REI', rei_value)
-    #     target_shore_point_layer.SetFeature(shore_point_feature)
-    #     result_REI[shore_id] = rei_value
 
     target_shore_point_layer.CommitTransaction()
     target_shore_point_layer.SyncToDisk()
@@ -1134,7 +1123,8 @@ def clip_geometry(
 
     Parameters:
         bounding_box_coords (list): a list of bounding box coordinates in
-            the same coordinate system as the geometry in `global_geom_strtree`.
+            the same coordinate system as the geometry in
+            `global_geom_strtree`.
         target_srs (osr.SpatialReference): target spatial reference for
             creating the target vector.
         ogr_geometry_type (ogr.wkb[TYPE]): geometry type to create for the
@@ -1663,6 +1653,63 @@ def compute_wave_period(Un, Fn, dn):
     return T_n
 
 
+def merge_masks_op(mask_a, mask_b):
+    return (mask_a == 1) & (mask_b == 1)
+
+
+def merge_cv_points(cv_vector_queue, target_cv_vector_path):
+    """Merge vectors in `cv_vector_queue` into single vector.
+
+    Parameters:
+        cv_vector_queue (multiprocessing.Processing): a queue containing
+            paths to CV workspace point vectors. Terminated with
+            `STOP_SENTINEL`.
+        target_cv_vector_path (str): path to a point vector created by this
+            function.
+
+    Returns:
+        None.
+
+    """
+    gpkg_driver = osr.GetDriverByName('GPKG')
+    target_cv_vector = gpkg_driver.CreateDataSource(target_cv_vector_path)
+    layer_name = os.path.basename(os.path.splitext(target_cv_vector_path)[0])
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    target_cv_layer = (
+        target_cv_vector.CreateLayer(layer_name, wgs84_srs, ogr.wkbPoint))
+    fields_to_copy = [
+        'Rgeomorphology', 'surge', 'ew', 'rei', 'slr', 'Rhab', 'relief']
+    for field_id in fields_to_copy:
+        target_cv_layer.CreateField(ogr.FieldDefn(field_id, ogr.OFTReal))
+    target_cv_layer_defn = target_cv_layer.GetLayerDefn()
+
+    target_cv_layer.StartTransaction()
+    while True:
+        cv_vector_path = cv_vector_queue.get()
+        if cv_vector_path == STOP_SENTINEL:
+            break
+        cv_vector = gdal.OpenEx(cv_vector_path, gdal.OF_VECTOR)
+        cv_layer = cv_vector.GetLayer()
+        cv_projection = cv_layer.GetSpatialRef()
+        base_to_target_transform = osr.CoordinateTransformation(
+            cv_projection, wgs84_srs)
+
+        for cv_feature in cv_layer:
+            cv_geom = cv_feature.GetGeometryRef().Clone()
+            _ = cv_geom.Transform(base_to_target_transform)
+            target_feature = ogr.Feature(target_cv_layer_defn)
+            target_feature.SetGeometry(cv_geom)
+            for field_id in fields_to_copy:
+                target_feature.SetField(cv_feature.GetField(field_id))
+            target_cv_layer.CreateFeature(target_feature)
+        cv_feature = None
+        cv_geom = None
+        cv_layer = None
+        cv_vector = None
+    target_cv_layer.CommitTransaction()
+
+
 if __name__ == '__main__':
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
@@ -1673,7 +1720,7 @@ if __name__ == '__main__':
 
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
 
-    for zip_url in [LS_POPULATION_URL]:
+    for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
             CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
         download_and_unzip_task = task_graph.add_task(
@@ -1764,25 +1811,58 @@ if __name__ == '__main__':
             risk_distance_tuple[1])
 
     # TODO: merge mangroves and onshore forest
+    # 'mangroves'
+    # (1, 2000) -- forest risk/dist
+    merged_forest_mangrove_raster_path = os.path.join(
+        CHURN_DIR, 'merged_forest_mangrove.tif')
+    aligned_raster_path_list = [
+        os.path.join(CHURN_DIR, x) for x in ['a.tif', 'b.tif']]
+    habitat_raster_info = pygeoprocessing.get_raster_info(
+        habitat_raster_risk_map[(1, 2000)][0])
+    align_task = task_graph.add_task(
+        func=pygeoprocessing.align_and_resize_raster_stack,
+        args=(
+            [habitat_raster_risk_map[(1, 2000)][0],
+             local_data_path_map['mangroves']], aligned_raster_path_list,
+            ['near', 'near'],
+            habitat_raster_info['pixel_size'], 'union'),
+        target_path_list=aligned_raster_path_list,
+        task_name='align mangrove and forest')
+
+    mask_task = task_graph.add_task(
+        func=pygeoprocessing.raster_calculator,
+        args=(
+            ((aligned_raster_path_list[0], 1),
+             (aligned_raster_path_list[1], 1)), merge_masks_op,
+            merged_forest_mangrove_raster_path, 0, gdal.GDT_Byte),
+        target_path_list=[merged_forest_mangrove_raster_path],
+        dependent_task_list=[align_task],
+        task_name='merge mangrove/forest masks')
 
     task_graph.join()
     task_graph.close()
+
+    del habitat_raster_risk_map[(1, 2000)]
+    habitat_raster_risk_map['mangroves'] = (
+        merged_forest_mangrove_raster_path, 1, 1000)
 
     shore_grid_vector = gdal.OpenEx(
         local_data_path_map['shore_grid'], gdal.OF_VECTOR)
     shore_grid_layer = shore_grid_vector.GetLayer()
 
     bb_work_queue = multiprocessing.Queue()
+    cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_thread = threading.Thread(
         target=cv_grid_worker,
         args=(
             bb_work_queue,
+            cv_point_complete_queue,
             local_data_path_map['landmass'],
             local_data_path_map['geomorphology'],
             local_data_path_map['slr'],
             local_data_path_map['dem'],
-            r"C:\Users\richp\Documents\code_repos\cnc\cnc_global_cv\global_cv_workspace\test_data\local_wwiii.gpkg", #global_wwiii_vector_path,
+            global_wwiii_vector_path,
             habitat_raster_risk_map,
             ))
 
@@ -1808,5 +1888,16 @@ if __name__ == '__main__':
 
     bb_work_queue.put(STOP_SENTINEL)
     cv_grid_worker_thread.start()
+
+    merge_cv_points_thread = threading.Thread(
+        target=merge_cv_points,
+        args=(cv_point_complete_queue, TARGET_CV_VECTOR_PATH))
+    merge_cv_points_thread.start()
+
     cv_grid_worker_thread.join()
+    # when workers are complete signal merger complete
+    cv_point_complete_queue.put(STOP_SENTINEL)
+
+    merge_cv_points_thread.join()
+
     LOGGER.debug('cv grid joined')
