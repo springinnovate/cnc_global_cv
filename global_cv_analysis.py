@@ -1241,13 +1241,24 @@ def sample_line_to_points(
         current_distance = 0.0
         line_geom = feature.GetGeometryRef()
         line = shapely.wkb.loads(line_geom.ExportToWkb())
-        while current_distance < line.length:
-            new_point = line.interpolate(current_distance)
-            current_distance += point_step_size
+        if line_geom.GetGeometryType() == ogr.wkbPoint:
+            LOGGER.warning(
+                'we got a single point rather than a line, using that only')
             new_point_feature = ogr.Feature(point_defn)
-            new_point_geom = ogr.CreateGeometryFromWkb(new_point.wkb)
-            new_point_feature.SetGeometry(new_point_geom)
+            new_point_feature.SetGeometry(line_geom)
             point_layer.CreateFeature(new_point_feature)
+        else:
+            while current_distance < line.length:
+                try:
+                    new_point = line.interpolate(current_distance)
+                    current_distance += point_step_size
+                    new_point_feature = ogr.Feature(point_defn)
+                    new_point_geom = ogr.CreateGeometryFromWkb(new_point.wkb)
+                    new_point_feature.SetGeometry(new_point_geom)
+                    point_layer.CreateFeature(new_point_feature)
+                except Exception:
+                    LOGGER.exception('error on %s', line_geom)
+                    raise
 
     point_layer = None
     point_vector = None
