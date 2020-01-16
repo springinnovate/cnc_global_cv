@@ -369,6 +369,8 @@ def cv_grid_worker(
         # otherwise payload is the bounding box
         index, (lng_min, lat_min, lng_max, lat_max) = payload
         bounding_box_list = [lng_min, lat_min, lng_max, lat_max]
+        buffered_bounding_box_list = [
+            lng_min-0.1, lat_min-0.1, lng_max+0.1, lat_max+0.1]
         # create workspace
         workspace_dir = os.path.join(
             GRID_WORKSPACE_DIR, '%d_%s_%s_%s_%s' % (
@@ -396,7 +398,7 @@ def cv_grid_worker(
             local_landmass_vector_path = os.path.join(
                 workspace_dir, 'landmass.gpkg')
             clip_geometry(
-                bounding_box_list, wgs84_srs, utm_srs,
+                buffered_bounding_box_list, wgs84_srs, utm_srs,
                 ogr.wkbPolygon, landmass_strtree,
                 local_landmass_vector_path)
 
@@ -1163,13 +1165,13 @@ def clip_geometry(
         vector = None
         raise ValueError('no data intersects this box')
     for geom in possible_geom_list:
-        clipped_line = bounding_box.intersection(geom)
-        clipped_line_geom = ogr.CreateGeometryFromWkb(clipped_line.wkb)
-        error_code = clipped_line_geom.Transform(base_to_target_transform)
+        clipped_shapely_geom = bounding_box.intersection(geom)
+        clipped_geom = ogr.CreateGeometryFromWkb(clipped_shapely_geom.wkb)
+        error_code = clipped_geom.Transform(base_to_target_transform)
         if error_code:
             raise RuntimeError(error_code)
         feature = ogr.Feature(layer_defn)
-        feature.SetGeometry(clipped_line_geom.Clone())
+        feature.SetGeometry(clipped_geom.Clone())
         for field_name, _ in global_geom_strtree.field_name_type_list:
             feature.SetField(
                 field_name, geom.field_val_map[field_name])
@@ -1654,7 +1656,8 @@ def compute_wave_period(Un, Fn, dn):
 
 
 def merge_masks_op(mask_a, mask_b):
-    return (mask_a == 1) & (mask_b == 1)
+    result = numpy.empty_like(mask_a)
+    return result
 
 
 def merge_cv_points(cv_vector_queue, target_cv_vector_path):
@@ -1671,7 +1674,7 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
         None.
 
     """
-    gpkg_driver = osr.GetDriverByName('GPKG')
+    gpkg_driver = ogr.GetDriverByName('GPKG')
     target_cv_vector = gpkg_driver.CreateDataSource(target_cv_vector_path)
     layer_name = os.path.basename(os.path.splitext(target_cv_vector_path)[0])
     wgs84_srs = osr.SpatialReference()
@@ -1701,7 +1704,8 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
             target_feature = ogr.Feature(target_cv_layer_defn)
             target_feature.SetGeometry(cv_geom)
             for field_id in fields_to_copy:
-                target_feature.SetField(cv_feature.GetField(field_id))
+                target_feature.SetField(
+                    field_id, cv_feature.GetField(field_id))
             target_cv_layer.CreateFeature(target_feature)
         cv_feature = None
         cv_geom = None
@@ -1813,8 +1817,6 @@ if __name__ == '__main__':
     # TODO: merge mangroves and onshore forest
     # 'mangroves'
     # (1, 2000) -- forest risk/dist
-    merged_forest_mangrove_raster_path = os.path.join(
-        CHURN_DIR, 'merged_forest_mangrove.tif')
     aligned_raster_path_list = [
         os.path.join(CHURN_DIR, x) for x in ['a.tif', 'b.tif']]
     habitat_raster_info = pygeoprocessing.get_raster_info(
@@ -1829,12 +1831,16 @@ if __name__ == '__main__':
         target_path_list=aligned_raster_path_list,
         task_name='align mangrove and forest')
 
+    align_task.join()
+
+    merged_forest_mangrove_raster_path = os.path.join(
+        CHURN_DIR, 'merged_forest_mangrove.tif')
     mask_task = task_graph.add_task(
         func=pygeoprocessing.raster_calculator,
         args=(
             ((aligned_raster_path_list[0], 1),
              (aligned_raster_path_list[1], 1)), merge_masks_op,
-            merged_forest_mangrove_raster_path, 0, gdal.GDT_Byte),
+            merged_forest_mangrove_raster_path, gdal.GDT_Int16, 0),
         target_path_list=[merged_forest_mangrove_raster_path],
         dependent_task_list=[align_task],
         task_name='merge mangrove/forest masks')
