@@ -442,7 +442,8 @@ def cv_grid_worker(
 
             # wind and wave power
             calculate_wind_and_wave(
-                shore_point_vector_path, landmass_boundary_vector_path,
+                shore_point_vector_path, local_landmass_vector_path,
+                landmass_boundary_vector_path,
                 local_dem_path, wwiii_rtree, 'rei', 'ew')
 
             # Rsurge
@@ -653,7 +654,8 @@ def calculate_surge(
 
 
 def calculate_wind_and_wave(
-        shore_point_vector_path, landmass_vector_path, bathymetry_raster_path,
+        shore_point_vector_path, landmass_vector_path,
+        landmass_boundary_vector_path, bathymetry_raster_path,
         wwiii_rtree, wind_fieldname, wave_fieldname):
     """Calculate wind exposure for given points.
 
@@ -662,6 +664,8 @@ def calculate_wind_and_wave(
             be modified to hold the total wind exposure at this point.
         landmass_vector_path (str): path to a vector indicating landmass that
             will block wind exposure.
+        landmass_boundary_vector_path (str): path to a string vector containing
+            the perimeter of `landmass_vector_path`.
         bathymetry_raster_path (str): path to a raster indicating bathymetry
             values. (negative is deeper).
         wwiii_rtree (str): path to an r_tree that can find the nearest point
@@ -732,7 +736,19 @@ def calculate_wind_and_wave(
     landmass_vector = None
     landmass_union_geom_prep = shapely.prepared.prep(landmass_union_geom)
 
-    landmass_strtree = build_strtree(landmass_vector_path)
+    landmass_boundary_vector = gdal.OpenEx(
+        landmass_boundary_vector_path, gdal.OF_VECTOR)
+    landmass_boundary_layer = landmass_boundary_vector.GetLayer()
+    landmass_boundary_geom_list = [
+        shapely.wkb.loads(f.GetGeometryRef().ExportToWkb())
+        for f in landmass_boundary_layer]
+    landmass_boundary_union_geom = shapely.ops.cascaded_union(
+        landmass_boundary_geom_list)
+    landmass_boundary_layer = None
+    landmass_boundary_vector = None
+    landmass_boundary_union_geom_prep = shapely.prepared.prep(
+        landmass_boundary_union_geom)
+    landmass_boundary_strtree = build_strtree(landmass_boundary_vector_path)
 
     target_shore_point_layer.StartTransaction()
     temp_fetch_rays_layer.StartTransaction()
@@ -754,6 +770,16 @@ def calculate_wind_and_wave(
         period_list = []
         e_local = 0.0
         e_ocean = 0.0
+
+        shore_point_geometry = shore_point_feature.GetGeometryRef()
+        shapely_point = shapely.wkb.loads(
+            shore_point_geometry.ExportToWkb())
+        if landmass_union_geom_prep.contains(shapely_point):
+            new_point = shapely.ops.nearest_points(
+                landmass_boundary_union_geom, shapely_point)[0]
+            LOGGER.debug('new point: %s %s', str(new_point), str(shore_point_geometry))
+            shore_point_geometry = ogr.CreateGeometryFromWkb(new_point.wkb)
+
         # Iterate over every ray direction
         for sample_index in range(N_FETCH_RAYS):
             compass_degree = int(sample_index * 360 / N_FETCH_RAYS)
@@ -776,17 +802,22 @@ def calculate_wind_and_wave(
             # Shore points are interpolated onto the coastline,
             # but floating point error results in points being just
             # barely inside/outside the landmass.
-            offset = 1  # 1 meter should be plenty
-            shore_point_geometry = shore_point_feature.GetGeometryRef()
+            offset = 10
+
             point_a_x = (
                 shore_point_geometry.GetX() + delta_x * offset)
             point_a_y = (
                 shore_point_geometry.GetY() + delta_y * offset)
+
+            origin_point = shapely.geometry.Point(point_a_x, point_a_y)
+            if landmass_union_geom_prep.intersects(origin_point):
+                # the origin is inside the landmass, skip
+                continue
+
             point_b_x = point_a_x + delta_x * (
                 MAX_FETCH_DISTANCE)
             point_b_y = point_a_y + delta_y * (
                 MAX_FETCH_DISTANCE)
-            shore_point_geometry = None
 
             # build ray geometry so we can intersect it later
             ray_geometry = ogr.Geometry(ogr.wkbLineString)
@@ -798,7 +829,7 @@ def calculate_wind_and_wave(
             ray_point_origin_shapely = shapely.geometry.Point(
                 point_a_x, point_a_y)
 
-            if not landmass_union_geom_prep.intersects(
+            if not landmass_boundary_union_geom_prep.intersects(
                     ray_point_origin_shapely):
                 # the origin is in ocean, so we'll get a ray length > 0.0
 
@@ -813,7 +844,7 @@ def calculate_wind_and_wave(
                 while True:
                     intersection = False
                     ray_envelope = ray_geometry.GetEnvelope()
-                    for landmass_line in landmass_strtree.query(
+                    for landmass_line in landmass_boundary_strtree.query(
                              shapely.geometry.box(
                                 *[ray_envelope[i] for i in [0, 2, 1, 3]])):
                         if landmass_line.id in tested_indexes:
@@ -895,7 +926,7 @@ def calculate_wind_and_wave(
             shore_point_feature.SetField(wind_fieldname, rei_value)
             shore_point_feature.SetField(wave_fieldname, max(e_ocean, e_local))
             target_shore_point_layer.SetFeature(shore_point_feature)
-
+        shore_point_geometry = None
     target_shore_point_layer.CommitTransaction()
     target_shore_point_layer.SyncToDisk()
     target_shore_point_layer = None
@@ -1814,9 +1845,6 @@ if __name__ == '__main__':
             risk_distance_mask_path, risk_distance_tuple[0],
             risk_distance_tuple[1])
 
-    # TODO: merge mangroves and onshore forest
-    # 'mangroves'
-    # (1, 2000) -- forest risk/dist
     aligned_raster_path_list = [
         os.path.join(CHURN_DIR, x) for x in ['a.tif', 'b.tif']]
     habitat_raster_info = pygeoprocessing.get_raster_info(
