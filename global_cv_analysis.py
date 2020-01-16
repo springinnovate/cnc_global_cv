@@ -1903,7 +1903,7 @@ if __name__ == '__main__':
     cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_list = []
-    N_WORKERS = 1
+    N_WORKERS = multiprocessing.cpu_count()
     for _ in range(N_WORKERS):
         cv_grid_worker_thread = multiprocessing.Process(
             target=cv_grid_worker,
