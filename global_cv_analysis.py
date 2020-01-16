@@ -1887,18 +1887,23 @@ if __name__ == '__main__':
     bb_work_queue = multiprocessing.Queue()
     cv_point_complete_queue = multiprocessing.Queue()
 
-    cv_grid_worker_thread = threading.Thread(
-        target=cv_grid_worker,
-        args=(
-            bb_work_queue,
-            cv_point_complete_queue,
-            local_data_path_map['landmass'],
-            local_data_path_map['geomorphology'],
-            local_data_path_map['slr'],
-            local_data_path_map['dem'],
-            global_wwiii_vector_path,
-            habitat_raster_risk_map,
-            ))
+    cv_grid_worker_list = []
+    N_WORKERS = 4
+    for _ in range(N_WORKERS):
+        cv_grid_worker_thread = multiprocessing.Process(
+            target=cv_grid_worker,
+            args=(
+                bb_work_queue,
+                cv_point_complete_queue,
+                local_data_path_map['landmass'],
+                local_data_path_map['geomorphology'],
+                local_data_path_map['slr'],
+                local_data_path_map['dem'],
+                global_wwiii_vector_path,
+                habitat_raster_risk_map,
+                ))
+        cv_grid_worker_thread.start()
+        cv_grid_worker_list.append(cv_grid_worker_thread)
 
     for path in [
             ls_population_raster_path,
@@ -1917,21 +1922,18 @@ if __name__ == '__main__':
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
-        if index > 10:
-            break
 
     bb_work_queue.put(STOP_SENTINEL)
-    cv_grid_worker_thread.start()
 
     merge_cv_points_thread = threading.Thread(
         target=merge_cv_points,
         args=(cv_point_complete_queue, TARGET_CV_VECTOR_PATH))
     merge_cv_points_thread.start()
 
-    cv_grid_worker_thread.join()
+    for cv_grid_worker_thread in cv_grid_worker_list:
+        cv_grid_worker_thread.join()
+
     # when workers are complete signal merger complete
     cv_point_complete_queue.put(STOP_SENTINEL)
-
     merge_cv_points_thread.join()
-
     LOGGER.debug('cv grid joined')
