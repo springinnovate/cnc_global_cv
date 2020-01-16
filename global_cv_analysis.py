@@ -5,6 +5,7 @@ Design doc is here:
 https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/edit#heading=h.bbujb61ete53
 
 """
+import argparse
 import collections
 import gzip
 import logging
@@ -1761,6 +1762,12 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Global CV analysis')
+    parser.add_argument(
+        'n_workers', help='Number of workers.')
+    args = parser.parse_args()
+    N_WORKERS = multiprocessing.cpu_count()
+
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
         try:
@@ -1903,8 +1910,7 @@ if __name__ == '__main__':
     cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_list = []
-    N_WORKERS = multiprocessing.cpu_count()
-    for _ in range(N_WORKERS):
+    for _ in range(args['n_workers']):
         cv_grid_worker_thread = multiprocessing.Process(
             target=cv_grid_worker,
             args=(
