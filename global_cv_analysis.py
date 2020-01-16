@@ -395,6 +395,12 @@ def cv_grid_worker(
                 ogr.wkbMultiLineString, geomorphology_strtree,
                 local_geomorphology_vector_path)
 
+            shore_point_vector_path = os.path.join(
+                workspace_dir, 'shore_points.gpkg')
+            sample_line_to_points(
+                local_geomorphology_vector_path, shore_point_vector_path,
+                SHORE_POINT_SAMPLE_DISTANCE)
+
             local_landmass_vector_path = os.path.join(
                 workspace_dir, 'landmass.gpkg')
             clip_geometry(
@@ -420,12 +426,6 @@ def cv_grid_worker(
                 global_dem_raster_path, local_slr_path, utm_srs.ExportToWkt(),
                 bounding_box_list, 0, 'bilinear', True,
                 target_pixel_size)
-
-            shore_point_vector_path = os.path.join(
-                workspace_dir, 'shore_points.gpkg')
-            sample_line_to_points(
-                local_geomorphology_vector_path, shore_point_vector_path,
-                SHORE_POINT_SAMPLE_DISTANCE)
 
             # Rrelief
             LOGGER.info('calculate relief on %s', workspace_dir)
@@ -1241,24 +1241,28 @@ def sample_line_to_points(
         current_distance = 0.0
         line_geom = feature.GetGeometryRef()
         line = shapely.wkb.loads(line_geom.ExportToWkb())
-        if line_geom.GetGeometryType() == ogr.wkbPoint:
-            LOGGER.warning(
-                'we got a single point rather than a line, using that only')
-            new_point_feature = ogr.Feature(point_defn)
-            new_point_feature.SetGeometry(line_geom)
-            point_layer.CreateFeature(new_point_feature)
-        else:
-            while current_distance < line.length:
-                try:
-                    new_point = line.interpolate(current_distance)
-                    current_distance += point_step_size
-                    new_point_feature = ogr.Feature(point_defn)
-                    new_point_geom = ogr.CreateGeometryFromWkb(new_point.wkb)
-                    new_point_feature.SetGeometry(new_point_geom)
-                    point_layer.CreateFeature(new_point_feature)
-                except Exception:
-                    LOGGER.exception('error on %s', line_geom)
-                    raise
+        if isinstance(line, shapely.geometry.collection.GeometryCollection):
+            line_list = []
+            for geom in list(line):
+                LOGGER.debug(geom)
+                if isinstance(geom, (
+                        shapely.geometry.linestring.LineString,
+                        shapely.geometry.multilinestring.MultiLineString)):
+                    LOGGER.debug('appending')
+                    line_list.append(geom)
+            print('building: %s', line_list)
+            line = shapely.geometry.MultiLineString(line_list)
+        while current_distance < line.length:
+            try:
+                new_point = line.interpolate(current_distance)
+                current_distance += point_step_size
+                new_point_feature = ogr.Feature(point_defn)
+                new_point_geom = ogr.CreateGeometryFromWkb(new_point.wkb)
+                new_point_feature.SetGeometry(new_point_geom)
+                point_layer.CreateFeature(new_point_feature)
+            except Exception:
+                LOGGER.exception('error on %s', line_geom)
+                raise
 
     point_layer = None
     point_vector = None
@@ -1899,7 +1903,7 @@ if __name__ == '__main__':
     cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_list = []
-    N_WORKERS = 4
+    N_WORKERS = 1
     for _ in range(N_WORKERS):
         cv_grid_worker_thread = multiprocessing.Process(
             target=cv_grid_worker,
