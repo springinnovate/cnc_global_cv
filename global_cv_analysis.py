@@ -81,7 +81,7 @@ SLR_RASTER_URL = (
     'md5_3072845759841d0b2523d00fe9518fee.tif')
 GLOBAL_GEOMORPHOLOGY_VECTOR_URL = (
     ECOSHARD_BUCKET_URL +
-    'geomorphology_md5_e539758b029f1f879a1d9b11466dbcb3.gpkg')
+    'geomorphology_md5_e65eff55840e7a80cfcb11fdad2d02d7.gpkg')
 GLOBAL_REEFS_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_reef_md5_5a90d55a505813b5aa9662faee351bf8.tif')
