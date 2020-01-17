@@ -179,7 +179,7 @@ HABITAT_VECTOR_PATH_MAP = {
     'mangroves': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['mangroves'])),
-        1, 1000.0),
+        1, 2000.0),
     'saltmarsh': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['saltmarsh'])),
