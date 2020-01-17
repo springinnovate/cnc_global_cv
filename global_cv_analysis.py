@@ -1762,7 +1762,6 @@ if __name__ == '__main__':
     parser.add_argument(
         'n_workers', help='Number of workers.')
     args = parser.parse_args()
-    N_WORKERS = multiprocessing.cpu_count()
 
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
@@ -1906,7 +1905,7 @@ if __name__ == '__main__':
     cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_list = []
-    for _ in range(int(args.n_workers)):
+    for worker_id in range(int(args.n_workers)):
         cv_grid_worker_thread = multiprocessing.Process(
             target=cv_grid_worker,
             args=(
@@ -1921,6 +1920,7 @@ if __name__ == '__main__':
                 ))
         cv_grid_worker_thread.start()
         cv_grid_worker_list.append(cv_grid_worker_thread)
+        LOGGER.debug('starting worker %d', worker_id)
 
     for path in [
             ls_population_raster_path,
