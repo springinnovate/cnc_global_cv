@@ -458,13 +458,9 @@ def cv_grid_worker(
             LOGGER.info('completed %s', shore_point_vector_path)
             cv_point_complete_queue.put(shore_point_vector_path)
 
-        except ValueError as e:
-            if 'no data intersects this box' in str(e):
-                LOGGER.exception('error on %s', payload)
-                LOGGER.warning('missing data, removing workspace')
-                retrying_rmtree(workspace_dir)
-            else:
-                raise
+        except ValueError:
+            LOGGER.exception('error on %s, removing workspace', payload)
+            retrying_rmtree(workspace_dir)
 
 
 def make_shore_kernel(kernel_path):
