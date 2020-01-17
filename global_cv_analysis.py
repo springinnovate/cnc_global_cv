@@ -458,7 +458,7 @@ def cv_grid_worker(
             LOGGER.info('completed %s', shore_point_vector_path)
             cv_point_complete_queue.put(shore_point_vector_path)
 
-        except ValueError:
+        except Exception:
             LOGGER.exception('error on %s, removing workspace', payload)
             retrying_rmtree(workspace_dir)
 
@@ -976,7 +976,14 @@ def calculate_slr(shore_point_vector_path, slr_raster_path, target_fieldname):
             pixel_x, pixel_y = [
                 int(x) for x in
                 gdal.ApplyGeoTransform(inv_gt, point_x, point_y)]
-
+            if pixel_x < 0:
+                pixel_x = 0
+            if pixel_y < 0:
+                pixel_y = 0
+            if pixel_x >= slr_band.XSize:
+                pixel_x = slr_band.XSize-1
+            if pixel_y >= slr_band.YSize:
+                pixel_y = slr_band.YSize-1
             try:
                 pixel_value = slr_band.ReadAsArray(
                     xoff=pixel_x, yoff=pixel_y, win_xsize=1,
@@ -1074,6 +1081,15 @@ def calculate_rhab(
                 int(x) for x in
                 gdal.ApplyGeoTransform(
                     inv_gt, shore_geom.GetX(), shore_geom.GetY())]
+            if pixel_x < 0:
+                pixel_x = 0
+            if pixel_y < 0:
+                pixel_y = 0
+            if pixel_x >= hab_effective_band.XSize:
+                pixel_x = hab_effective_band.XSize-1
+            if pixel_y >= hab_effective_band.YSize:
+                pixel_y = hab_effective_band.YSize-1
+
             try:
                 pixel_val = hab_effective_band.ReadAsArray(
                     xoff=pixel_x, yoff=pixel_y, win_xsize=1,
@@ -1340,6 +1356,15 @@ def calculate_relief(
             pixel_x, pixel_y = [
                 int(x) for x in
                 gdal.ApplyGeoTransform(inv_gt, point_x, point_y)]
+
+            if pixel_x < 0:
+                pixel_x = 0
+            if pixel_y < 0:
+                pixel_y = 0
+            if pixel_x >= relief_band.XSize:
+                pixel_x = relief_band.XSize-1
+            if pixel_y >= relief_band.YSize:
+                pixel_y = relief_band.YSize-1
 
             try:
                 pixel_value = relief_band.ReadAsArray(
