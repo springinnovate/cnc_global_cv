@@ -1826,7 +1826,7 @@ if __name__ == '__main__':
         except OSError:
             pass
 
-    task_graph = taskgraph.TaskGraph(CHURN_DIR, 2, 5.0)
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
 
     for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
@@ -2009,18 +2009,16 @@ if __name__ == '__main__':
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
-        if index > 10:
-            break
 
     bb_work_queue.put(STOP_SENTINEL)
-
-    for cv_grid_worker_thread in cv_grid_worker_list:
-        cv_grid_worker_thread.join()
 
     merge_cv_points_thread = threading.Thread(
         target=merge_cv_points,
         args=(cv_point_complete_queue, TARGET_CV_VECTOR_PATH))
     merge_cv_points_thread.start()
+
+    for cv_grid_worker_thread in cv_grid_worker_list:
+        cv_grid_worker_thread.join()
 
     # when workers are complete signal merger complete
     cv_point_complete_queue.put(STOP_SENTINEL)
