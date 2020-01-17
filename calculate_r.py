@@ -42,24 +42,22 @@ def add_cv_vector_risk(cv_risk_vector_path):
 
     """
 
+    cv_risk_vector = gdal.OpenEx(
+        cv_risk_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
+    cv_risk_layer = cv_risk_vector.GetLayer()
+
     for base_field, risk_field in [
             ('surge', 'Rsurge'), ('ew', 'Rwave'), ('rei', 'Rwind'),
             ('slr', 'Rslr'), ('relief', 'Rrelief')]:
-        cv_risk_vector = gdal.OpenEx(
-            cv_risk_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
-        cv_risk_layer = cv_risk_vector.GetLayer()
         cv_risk_layer.CreateField(ogr.FieldDefn(risk_field, ogr.OFTReal))
-
         base_array = numpy.empty(shape=(cv_risk_layer.GetFeatureCount(),))
-
         for index, feature in enumerate(cv_risk_layer):
             base_array[index] = feature.GetField(base_field)
-
         hist, bin_edges = numpy.histogram(base_array, bins=5)
 
         cv_risk_layer.ResetReading()
         cv_risk_layer.StartTransaction()
-        for index, feature in enumerate(cv_risk_layer):
+        for feature in cv_risk_layer:
             base_val = feature.GetField(base_field)
             risk = bisect.bisect_left(bin_edges, base_val)
             if risk < 1:
@@ -71,6 +69,17 @@ def add_cv_vector_risk(cv_risk_vector_path):
         cv_risk_layer.CommitTransaction()
         cv_risk_vector = None
         cv_risk_layer = None
+    cv_risk_layer.ResetReading()
+    cv_risk_layer.CreateField(ogr.FieldDefn('Rt', ogr.OFTReal))
+    cv_risk_layer.CreateField(ogr.FieldDefn('Rt_nohab', ogr.OFTReal))
+    for feature in cv_risk_layer:
+        exposure_index = 1.0
+        for risk_field in [
+                'Rgeomorphology', 'Rhab', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
+                'Rrelief']:
+            exposure_index *= feature.GetField(risk_field)
+        exposure_index = (exposure_index)*(1./7.)
+
 
 
 if __name__ == '__main__':

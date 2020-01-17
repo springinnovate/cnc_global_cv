@@ -116,6 +116,7 @@ SEDTYPE_TO_RISK = {
     4: 1,  # coral/mangrove
 }
 
+
 # This dictionary maps landcode id to (risk, dist) tuples
 LULC_CODE_TO_HAB_MAP = {
     0: (0, None),
@@ -124,7 +125,7 @@ LULC_CODE_TO_HAB_MAP = {
     12: (0, None),
     20: (0, None),
     30: (0, None),
-    40: (0, None),
+    40: (4, 500),
     50: (1, 2000),
     60: (1, 2000),
     61: (1, 2000),
@@ -176,11 +177,11 @@ HABITAT_VECTOR_PATH_MAP = {
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['reefs'])),
         1, 2000.0),
-    'mangroves': (
+    'mangroves_forest': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['mangroves'])),
         1, 2000.0),
-    'saltmarsh': (
+    'saltmarsh_wetland': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['saltmarsh'])),
         2, 1000.0),
@@ -1887,40 +1888,45 @@ if __name__ == '__main__':
             risk_distance_mask_path, risk_distance_tuple[0],
             risk_distance_tuple[1])
 
-    aligned_raster_path_list = [
-        os.path.join(CHURN_DIR, x) for x in ['a.tif', 'b.tif']]
-    habitat_raster_info = pygeoprocessing.get_raster_info(
-        habitat_raster_risk_map[(1, 2000)][0])
-    align_task = task_graph.add_task(
-        func=pygeoprocessing.align_and_resize_raster_stack,
-        args=(
-            [habitat_raster_risk_map[(1, 2000)][0],
-             local_data_path_map['mangroves']], aligned_raster_path_list,
-            ['near', 'near'],
-            habitat_raster_info['pixel_size'], 'union'),
-        target_path_list=aligned_raster_path_list,
-        task_name='align mangrove and forest')
+    for vector_name, lucode_type_tuple in [
+            ('mangroves_forest', (1, 2000)),
+            ('saltmarsh_wetland', (2, 1000))]:
+        aligned_raster_path_list = [
+            os.path.join(CHURN_DIR, x) for x in ['a.tif', 'b.tif']]
+        habitat_raster_info = pygeoprocessing.get_raster_info(
+            habitat_raster_risk_map[(1, 2000)][0])
+        align_task = task_graph.add_task(
+            func=pygeoprocessing.align_and_resize_raster_stack,
+            args=(
+                [habitat_raster_risk_map[(1, 2000)][0],
+                 local_data_path_map[vector_name]],
+                aligned_raster_path_list, ['near', 'near'],
+                habitat_raster_info['pixel_size'], 'union'),
+            target_path_list=aligned_raster_path_list,
+            task_name='align %s' % vector_name)
 
-    align_task.join()
+        align_task.join()
 
-    merged_forest_mangrove_raster_path = os.path.join(
-        CHURN_DIR, 'merged_forest_mangrove.tif')
-    mask_task = task_graph.add_task(
-        func=pygeoprocessing.raster_calculator,
-        args=(
-            ((aligned_raster_path_list[0], 1),
-             (aligned_raster_path_list[1], 1)), merge_masks_op,
-            merged_forest_mangrove_raster_path, gdal.GDT_Int16, 0),
-        target_path_list=[merged_forest_mangrove_raster_path],
-        dependent_task_list=[align_task],
-        task_name='merge mangrove/forest masks')
+        merged_forest_mangrove_raster_path = os.path.join(
+            CHURN_DIR, 'merged_%s.tif' % vector_name)
+        mask_task = task_graph.add_task(
+            func=pygeoprocessing.raster_calculator,
+            args=(
+                ((aligned_raster_path_list[0], 1),
+                 (aligned_raster_path_list[1], 1)), merge_masks_op,
+                merged_forest_mangrove_raster_path, gdal.GDT_Int16, 0),
+            target_path_list=[merged_forest_mangrove_raster_path],
+            dependent_task_list=[align_task],
+            task_name='merge %s masks' % vector_name)
+
+        mask_task.join()
+        del habitat_raster_risk_map[lucode_type_tuple]
+        habitat_raster_risk_map[vector_name] = (
+            merged_forest_mangrove_raster_path, lucode_type_tuple[0],
+            lucode_type_tuple[1])
 
     task_graph.join()
     task_graph.close()
-
-    del habitat_raster_risk_map[(1, 2000)]
-    habitat_raster_risk_map['mangroves'] = (
-        merged_forest_mangrove_raster_path, 1, 1000)
 
     shore_grid_vector = gdal.OpenEx(
         local_data_path_map['shore_grid'], gdal.OF_VECTOR)
