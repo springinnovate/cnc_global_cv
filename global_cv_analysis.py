@@ -217,17 +217,17 @@ HABITAT_VECTOR_PATH_MAP = {
         os.path.join(
             ECOSHARD_DIR, os.path.basename(
                 GLOBAL_DATA_URL_MAP['new_caledonian_barrier_reef'])),
-        1, 35000.0),
+        1, 20000.0),
     'great_barrier_reef': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(
                 GLOBAL_DATA_URL_MAP['great_barrier_reef'])),
-        1, 35000.0),
+        1, 135000.0),
     'keys_barrier_reef': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(
                 GLOBAL_DATA_URL_MAP['keys_barrier_reef'])),
-        1, 35000.0),
+        1, 25000.0),
     }
 
 
