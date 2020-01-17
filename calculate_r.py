@@ -17,6 +17,15 @@ logging.basicConfig(
     stream=sys.stdout)
 LOGGER = logging.getLogger(__name__)
 
+HAB_FIELDS = [
+    '4_500',
+    '2_2000',
+    'reefs',
+    'mangroves_forest',
+    'saltmarsh_wetland',
+    'seagrass',
+]
+
 
 def add_cv_vector_risk(cv_risk_vector_path):
     """Use existing biophysical fields in `cv_risk_vector_path to calc total R
@@ -72,6 +81,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
     cv_risk_layer.ResetReading()
     cv_risk_layer.CreateField(ogr.FieldDefn('Rt', ogr.OFTReal))
     cv_risk_layer.CreateField(ogr.FieldDefn('Rt_nohab', ogr.OFTReal))
+    cv_risk_layer.CreateField(ogr.FieldDefn('Rt_no', ogr.OFTReal))
     for feature in cv_risk_layer:
         exposure_index = 1.0
         for risk_field in [

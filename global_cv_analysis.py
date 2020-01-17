@@ -97,10 +97,10 @@ GLOBAL_SALTMARSH_RASTER_URL = (
 
 GLOBAL_DATA_URL_MAP = {
     'geomorphology': GLOBAL_GEOMORPHOLOGY_VECTOR_URL,
-    'mangroves': GLOBAL_MANGROVES_RASTER_URL,
+    'mangroves_forest': GLOBAL_MANGROVES_RASTER_URL,
     'reefs': GLOBAL_REEFS_RASTER_URL,
     'seagrass': GLOBAL_SEAGRASS_RASTER_URL,
-    'saltmarsh': GLOBAL_SALTMARSH_RASTER_URL,
+    'saltmarsh_wetland': GLOBAL_SALTMARSH_RASTER_URL,
     'dem': GLOBAL_DEM_RASTER_URL,
     'slr': SLR_RASTER_URL,
     'landmass': GLOBAL_POLYGON_URL,
@@ -179,11 +179,13 @@ HABITAT_VECTOR_PATH_MAP = {
         1, 2000.0),
     'mangroves_forest': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['mangroves'])),
+            ECOSHARD_DIR, os.path.basename(
+                GLOBAL_DATA_URL_MAP['mangroves_forest'])),
         1, 2000.0),
     'saltmarsh_wetland': (
         os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['saltmarsh'])),
+            ECOSHARD_DIR, os.path.basename(
+                GLOBAL_DATA_URL_MAP['saltmarsh_wetland'])),
         2, 1000.0),
     'seagrass': (
         os.path.join(
@@ -1032,10 +1034,12 @@ def calculate_rhab(
     shore_point_vector = gdal.OpenEx(
         shore_point_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
     shore_point_layer = shore_point_vector.GetLayer()
-    relief_field = ogr.FieldDefn(target_fieldname, ogr.OFTReal)
-    relief_field.SetPrecision(5)
-    relief_field.SetWidth(24)
-    shore_point_layer.CreateField(relief_field)
+
+    for hab_id in habitat_raster_path_map:
+        relief_field = ogr.FieldDefn(hab_id, ogr.OFTReal)
+        relief_field.SetPrecision(5)
+        relief_field.SetWidth(24)
+        shore_point_layer.CreateField(relief_field)
 
     shore_point_info = pygeoprocessing.get_vector_info(shore_point_vector_path)
 
@@ -1076,6 +1080,7 @@ def calculate_rhab(
             hab_effective_area_raster_path, gdal.OF_RASTER)
         hab_effective_band = hab_effective_raster.GetRasterBand(1)
         shore_point_layer.ResetReading()
+        shore_point_layer.StartTransaction()
         for shore_feature in shore_point_layer:
             shore_geom = shore_feature.GetGeometryRef()
             pixel_x, pixel_y = [
@@ -1102,27 +1107,9 @@ def calculate_rhab(
             # use max risk if no coverage
             shore_point_feature_risk_map[shore_feature.GetFID()].append(
                 risk_val if pixel_val else 5)
-
-    shore_point_layer.StartTransaction()
-    for fid, risk_val_list in shore_point_feature_risk_map.items():
-        min_rank = 5.0
-        sum_sq_rank = 0.0
-        for risk_val in risk_val_list:
-            if risk_val < min_rank:
-                min_rank = risk_val
-            sum_sq_rank += (5 - risk_val)**2
-
-        if sum_sq_rank > 0:
-            r_hab_val = max(
-                1.0, 4.8 - 0.5 * (
-                    (1.5 * (5 - min_rank))**2 + sum_sq_rank -
-                    (5 - min_rank)**2)**0.5)
-        else:
-            r_hab_val = 5.0
-
-        shore_feature = shore_point_layer.GetFeature(fid)
-        shore_feature.SetField(target_fieldname, float(r_hab_val))
-        shore_point_layer.SetFeature(shore_feature)
+            shore_feature.SetField(hab_id, risk_val if pixel_val else 5)
+            shore_point_layer.SetFeature(shore_feature)
+        shore_point_layer.CommitTransaction()
 
     shore_point_layer.CommitTransaction()
     shore_point_layer = None
@@ -1796,7 +1783,7 @@ if __name__ == '__main__':
         except OSError:
             pass
 
-    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, 2, 5.0)
 
     for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
@@ -1892,37 +1879,35 @@ if __name__ == '__main__':
             ('mangroves_forest', (1, 2000)),
             ('saltmarsh_wetland', (2, 1000))]:
         aligned_raster_path_list = [
-            os.path.join(CHURN_DIR, x) for x in ['a.tif', 'b.tif']]
+            os.path.join(CHURN_DIR, x) for x in [
+                '%s_a.tif' % vector_name, '%s_b.tif' % vector_name]]
         habitat_raster_info = pygeoprocessing.get_raster_info(
-            habitat_raster_risk_map[(1, 2000)][0])
+            habitat_raster_risk_map[lucode_type_tuple][0])
         align_task = task_graph.add_task(
             func=pygeoprocessing.align_and_resize_raster_stack,
             args=(
-                [habitat_raster_risk_map[(1, 2000)][0],
+                [habitat_raster_risk_map[lucode_type_tuple][0],
                  local_data_path_map[vector_name]],
                 aligned_raster_path_list, ['near', 'near'],
                 habitat_raster_info['pixel_size'], 'union'),
             target_path_list=aligned_raster_path_list,
             task_name='align %s' % vector_name)
 
-        align_task.join()
-
-        merged_forest_mangrove_raster_path = os.path.join(
+        merged_hab_raster_path = os.path.join(
             CHURN_DIR, 'merged_%s.tif' % vector_name)
         mask_task = task_graph.add_task(
             func=pygeoprocessing.raster_calculator,
             args=(
                 ((aligned_raster_path_list[0], 1),
                  (aligned_raster_path_list[1], 1)), merge_masks_op,
-                merged_forest_mangrove_raster_path, gdal.GDT_Int16, 0),
-            target_path_list=[merged_forest_mangrove_raster_path],
+                merged_hab_raster_path, gdal.GDT_Int16, 0),
+            target_path_list=[merged_hab_raster_path],
             dependent_task_list=[align_task],
             task_name='merge %s masks' % vector_name)
 
-        mask_task.join()
         del habitat_raster_risk_map[lucode_type_tuple]
         habitat_raster_risk_map[vector_name] = (
-            merged_forest_mangrove_raster_path, lucode_type_tuple[0],
+            merged_hab_raster_path, lucode_type_tuple[0],
             lucode_type_tuple[1])
 
     task_graph.join()
@@ -1970,6 +1955,8 @@ if __name__ == '__main__':
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
+        if index > 10:
+            break
 
     bb_work_queue.put(STOP_SENTINEL)
 
