@@ -95,6 +95,19 @@ GLOBAL_SALTMARSH_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_saltmarsh_md5_203d8600fd4b6df91f53f66f2a011bcd.tif')
 
+GLOBAL_MESOAMERICAN_BARRIER_REEF = (
+    ECOSHARD_BUCKET_URL +
+    'mesoamerican_barrier_reef_md5_81a5ddce13728469eabfe28443f5cd70.gpkg')
+GLOBAL_NEW_CALEDONIAN_BARRIER_REEF = (
+    ECOSHARD_BUCKET_URL +
+    'new_caledonian_barrier_reef_md5_fcfaa38c91705a45d4aa0f932da34923.gpkg')
+GLOBAL_GREAT_BARRIER_REEF = (
+    ECOSHARD_BUCKET_URL +
+    'great_barrier_reef_md5_7a8d0468467dd31a92d637b0f1571efc.gpkg')
+GLOBAL_KEYS_BARRIER_REEF = (
+    ECOSHARD_BUCKET_URL +
+    'keys_barrier_reef_md5_e8188b6b53cc3319e80f3ab52b4bc2de.gpkg')
+
 GLOBAL_DATA_URL_MAP = {
     'geomorphology': GLOBAL_GEOMORPHOLOGY_VECTOR_URL,
     'mangroves_forest': GLOBAL_MANGROVES_RASTER_URL,
@@ -105,7 +118,11 @@ GLOBAL_DATA_URL_MAP = {
     'slr': SLR_RASTER_URL,
     'landmass': GLOBAL_POLYGON_URL,
     'shore_grid': SHORE_GRID_URL,
-    'lulc': LULC_RASTER_URL
+    'lulc': LULC_RASTER_URL,
+    'mesoamerican_barrier_reef': GLOBAL_MESOAMERICAN_BARRIER_REEF,
+    'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
+    'great_barrier_reef': GLOBAL_GREAT_BARRIER_REEF,
+    'keys_barrier_reef': GLOBAL_KEYS_BARRIER_REEF,
     }
 
 SEDTYPE_TO_RISK = {
@@ -190,7 +207,28 @@ HABITAT_VECTOR_PATH_MAP = {
     'seagrass': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['seagrass'])),
-        4, 500.0)}
+        4, 500.0),
+    'mesoamerican_barrier_reef': (
+        os.path.join(
+            ECOSHARD_DIR, os.path.basename(
+                GLOBAL_DATA_URL_MAP['mesoamerican_barrier_reef'])),
+        1, 35000.0),
+    'new_caledonian_barrier_reef': (
+        os.path.join(
+            ECOSHARD_DIR, os.path.basename(
+                GLOBAL_DATA_URL_MAP['new_caledonian_barrier_reef'])),
+        1, 35000.0),
+    'great_barrier_reef': (
+        os.path.join(
+            ECOSHARD_DIR, os.path.basename(
+                GLOBAL_DATA_URL_MAP['great_barrier_reef'])),
+        1, 35000.0),
+    'keys_barrier_reef': (
+        os.path.join(
+            ECOSHARD_DIR, os.path.basename(
+                GLOBAL_DATA_URL_MAP['keys_barrier_reef'])),
+        1, 35000.0),
+    }
 
 
 def download_and_unzip(url, target_dir, target_token_path):
@@ -1738,7 +1776,10 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
     target_cv_layer = (
         target_cv_vector.CreateLayer(layer_name, wgs84_srs, ogr.wkbPoint))
     fields_to_copy = [
-        'Rgeomorphology', 'surge', 'ew', 'rei', 'slr', 'Rhab', 'relief']
+        'Rgeomorphology', 'surge', 'ew', 'rei', 'slr', 'relief',
+        '4_500', '2_2000', 'reefs', 'mangroves_forest', 'saltmarsh_wetland',
+        'seagrass']
+
     for field_id in fields_to_copy:
         target_cv_layer.CreateField(ogr.FieldDefn(field_id, ogr.OFTReal))
     target_cv_layer_defn = target_cv_layer.GetLayerDefn()
@@ -1912,6 +1953,17 @@ if __name__ == '__main__':
 
     task_graph.join()
     task_graph.close()
+    LOGGER.debug(habitat_raster_risk_map)
+
+    # convert tuple to strings for habitat risk so we can make fields for them
+    tuple_list = [
+        hab_index for hab_index in habitat_raster_risk_map
+        if isinstance(hab_index, tuple)]
+    for tuple_index in tuple_list:
+        str_index = '%s_%s' % tuple_index
+        habitat_raster_risk_map[str_index] = (
+            habitat_raster_risk_map[tuple_index])
+        del habitat_raster_risk_map[tuple_index]
 
     shore_grid_vector = gdal.OpenEx(
         local_data_path_map['shore_grid'], gdal.OF_VECTOR)
@@ -1960,13 +2012,13 @@ if __name__ == '__main__':
 
     bb_work_queue.put(STOP_SENTINEL)
 
+    for cv_grid_worker_thread in cv_grid_worker_list:
+        cv_grid_worker_thread.join()
+
     merge_cv_points_thread = threading.Thread(
         target=merge_cv_points,
         args=(cv_point_complete_queue, TARGET_CV_VECTOR_PATH))
     merge_cv_points_thread.start()
-
-    for cv_grid_worker_thread in cv_grid_worker_list:
-        cv_grid_worker_thread.join()
 
     # when workers are complete signal merger complete
     cv_point_complete_queue.put(STOP_SENTINEL)

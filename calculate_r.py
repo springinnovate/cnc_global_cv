@@ -24,6 +24,10 @@ HAB_FIELDS = [
     'mangroves_forest',
     'saltmarsh_wetland',
     'seagrass',
+    'mesoamerican_barrier_reef',
+    'new_caledonian_barrier_reef',
+    'great_barrier_reef',
+    'keys_barrier_reef',
 ]
 
 
@@ -80,16 +84,29 @@ def add_cv_vector_risk(cv_risk_vector_path):
         cv_risk_layer = None
     cv_risk_layer.ResetReading()
     cv_risk_layer.CreateField(ogr.FieldDefn('Rt', ogr.OFTReal))
-    cv_risk_layer.CreateField(ogr.FieldDefn('Rt_nohab', ogr.OFTReal))
-    cv_risk_layer.CreateField(ogr.FieldDefn('Rt_no', ogr.OFTReal))
+    for hab_field in HAB_FIELDS:
+        cv_risk_layer.CreateField(
+            ogr.FieldDefn('Rhab_%s' % hab_field, ogr.OFTReal))
+        cv_risk_layer.CreateField(
+            ogr.FieldDefn('Rt_nohab_%s' % hab_field, ogr.OFTReal))
+    cv_risk_layer.CreateField(
+        ogr.FieldDefn('Rhab' % hab_field, ogr.OFTReal))
+    cv_risk_layer.CreateField(
+        ogr.FieldDefn('Rt_nohab' % hab_field, ogr.OFTReal))
+
+    cv_risk_layer.ResetReading()
+    cv_risk_layer.StartTransaction()
     for feature in cv_risk_layer:
+        for hab_field in HAB_FIELDS:
+
+
         exposure_index = 1.0
         for risk_field in [
                 'Rgeomorphology', 'Rhab', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
                 'Rrelief']:
             exposure_index *= feature.GetField(risk_field)
         exposure_index = (exposure_index)*(1./7.)
-
+    cv_risk_layer.CommitTransaction()
 
 
 if __name__ == '__main__':
