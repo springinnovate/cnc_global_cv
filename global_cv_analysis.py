@@ -97,16 +97,16 @@ GLOBAL_SALTMARSH_RASTER_URL = (
 
 GLOBAL_MESOAMERICAN_BARRIER_REEF = (
     ECOSHARD_BUCKET_URL +
-    'mesoamerican_barrier_reef_md5_81a5ddce13728469eabfe28443f5cd70.gpkg')
+    'mesoamerican_barrier_reef_md5_4e8964bf9bf3d0f5fdddebd204eb3b32.tif')
 GLOBAL_NEW_CALEDONIAN_BARRIER_REEF = (
     ECOSHARD_BUCKET_URL +
-    'new_caledonian_barrier_reef_md5_fcfaa38c91705a45d4aa0f932da34923.gpkg')
+    'new_caledonian_barrier_reef_md5_ab1e8e54304a916101b9a53baa47c908.tif')
 GLOBAL_GREAT_BARRIER_REEF = (
     ECOSHARD_BUCKET_URL +
-    'great_barrier_reef_md5_7a8d0468467dd31a92d637b0f1571efc.gpkg')
+    'great_barrier_reef_md5_68ec7a55480f0d8a6445ccfde21b48e0.tif')
 GLOBAL_KEYS_BARRIER_REEF = (
     ECOSHARD_BUCKET_URL +
-    'keys_barrier_reef_md5_e8188b6b53cc3319e80f3ab52b4bc2de.gpkg')
+    'keys_barrier_reef_md5_21a5374ffd7237c6ccf629a8d78b3b51.tif')
 
 GLOBAL_DATA_URL_MAP = {
     'geomorphology': GLOBAL_GEOMORPHOLOGY_VECTOR_URL,
@@ -222,7 +222,7 @@ HABITAT_VECTOR_PATH_MAP = {
         os.path.join(
             ECOSHARD_DIR, os.path.basename(
                 GLOBAL_DATA_URL_MAP['great_barrier_reef'])),
-        1, 135000.0),
+        1, 35000.0),
     'keys_barrier_reef': (
         os.path.join(
             ECOSHARD_DIR, os.path.basename(
@@ -1778,7 +1778,9 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
     fields_to_copy = [
         'Rgeomorphology', 'surge', 'ew', 'rei', 'slr', 'relief',
         '4_500', '2_2000', 'reefs', 'mangroves_forest', 'saltmarsh_wetland',
-        'seagrass']
+        'seagrass', 'mesoamerican_barrier_reef', 'new_caledonian_barrier_reef',
+        'great_barrier_reef', 'keys_barrier_reef',
+        ]
 
     for field_id in fields_to_copy:
         target_cv_layer.CreateField(ogr.FieldDefn(field_id, ogr.OFTReal))
