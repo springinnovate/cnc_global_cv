@@ -64,7 +64,7 @@ BUFFER_VECTOR_URL = (
     'buffered_global_shore_5km_md5_a68e1049c1c03673add014cd29b7b368.gpkg')
 SHORE_GRID_URL = (
     ECOSHARD_BUCKET_URL +
-    'shore_grid_md5_1a09b69c0c548d3b25d7e14c3ddb60c9.gpkg')
+    'shore_grid_md5_07aea173cf373474c096f1d5e3463c2f.gpkg')
 
 GLOBAL_WWIII_GZ_URL = (
     ECOSHARD_BUCKET_URL +
