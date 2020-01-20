@@ -815,7 +815,8 @@ def calculate_wind_and_wave(
         if landmass_union_geom_prep.contains(shapely_point):
             new_point = shapely.ops.nearest_points(
                 landmass_boundary_union_geom, shapely_point)[0]
-            LOGGER.debug('new point: %s %s', str(new_point), str(shore_point_geometry))
+            LOGGER.debug(
+                'new point: %s %s', str(new_point), str(shore_point_geometry))
             shore_point_geometry = ogr.CreateGeometryFromWkb(new_point.wkb)
 
         # Iterate over every ray direction
@@ -961,9 +962,9 @@ def calculate_wind_and_wave(
                 ray_feature = None
                 ray_geometry = None
                 rei_value += ray_length * rei_pct * rei_v
-            shore_point_feature.SetField(wind_fieldname, rei_value)
-            shore_point_feature.SetField(wave_fieldname, max(e_ocean, e_local))
-            target_shore_point_layer.SetFeature(shore_point_feature)
+        shore_point_feature.SetField(wind_fieldname, rei_value)
+        shore_point_feature.SetField(wave_fieldname, max(e_ocean, e_local))
+        target_shore_point_layer.SetFeature(shore_point_feature)
         shore_point_geometry = None
     target_shore_point_layer.CommitTransaction()
     target_shore_point_layer.SyncToDisk()

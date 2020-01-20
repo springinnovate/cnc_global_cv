@@ -20,10 +20,14 @@ LOGGER = logging.getLogger(__name__)
 HAB_FIELDS = [
     '4_500',
     '2_2000',
-    'reefs',
     'mangroves_forest',
     'saltmarsh_wetland',
     'seagrass',
+    'reefs_all',
+]
+
+REEF_FIELDS = [
+    'reefs',
     'mesoamerican_barrier_reef',
     'new_caledonian_barrier_reef',
     'great_barrier_reef',
@@ -66,6 +70,9 @@ def add_cv_vector_risk(cv_risk_vector_path):
         base_array = numpy.empty(shape=(cv_risk_layer.GetFeatureCount(),))
         for index, feature in enumerate(cv_risk_layer):
             base_array[index] = feature.GetField(base_field)
+        nan_mask = numpy.isnan(base_array)
+        max_val = numpy.max(base_array[~nan_mask])
+        base_array[nan_mask] = max_val
         hist, bin_edges = numpy.histogram(base_array, bins=5)
 
         cv_risk_layer.ResetReading()
@@ -80,32 +87,86 @@ def add_cv_vector_risk(cv_risk_vector_path):
             feature.SetField(risk_field, risk)
             cv_risk_layer.SetFeature(feature)
         cv_risk_layer.CommitTransaction()
-        cv_risk_vector = None
-        cv_risk_layer = None
     cv_risk_layer.ResetReading()
+
     cv_risk_layer.CreateField(ogr.FieldDefn('Rt', ogr.OFTReal))
     for hab_field in HAB_FIELDS:
         cv_risk_layer.CreateField(
             ogr.FieldDefn('Rhab_%s' % hab_field, ogr.OFTReal))
         cv_risk_layer.CreateField(
+            ogr.FieldDefn('Rnohab_%s' % hab_field, ogr.OFTReal))
+        cv_risk_layer.CreateField(
             ogr.FieldDefn('Rt_nohab_%s' % hab_field, ogr.OFTReal))
-    cv_risk_layer.CreateField(
-        ogr.FieldDefn('Rhab' % hab_field, ogr.OFTReal))
-    cv_risk_layer.CreateField(
-        ogr.FieldDefn('Rt_nohab' % hab_field, ogr.OFTReal))
+    cv_risk_layer.CreateField(ogr.FieldDefn('Rhab_all', ogr.OFTReal))
+    cv_risk_layer.CreateField(ogr.FieldDefn('Rt_nohab_all', ogr.OFTReal))
+
+    # reefs are special
+    cv_risk_layer.CreateField(ogr.FieldDefn('reefs_all', ogr.OFTReal))
 
     cv_risk_layer.ResetReading()
     cv_risk_layer.StartTransaction()
     for feature in cv_risk_layer:
+        reef_risk_val = min(
+            [feature.GetField(reef_field) for reef_field in REEF_FIELDS])
+        feature.SetField('reefs_all', reef_risk_val)
+
+        hab_val_map = {}
         for hab_field in HAB_FIELDS:
+            hab_val = feature.GetField(hab_field)
+            feature.SetField('Rhab_%s' % hab_field, hab_val)
+            hab_val_map[hab_field] = hab_val
 
+            # loop through every hab field but hab_field to calc Rhab_no
+            risk_diff_list = []  # for (5-rk) vals
+            for sub_hab_field in HAB_FIELDS:
+                if sub_hab_field != hab_field:
+                    risk_diff_list.append(5-feature.GetField(sub_hab_field))
 
+            r_nohab = 4.8 - 0.5 * numpy.sqrt(
+                (1.5 * max(risk_diff_list))**2 +
+                numpy.sum([x**2 for x in risk_diff_list]) -
+                max(risk_diff_list)**2)
+            feature.SetField('Rnohab_%s' % hab_field, r_nohab)
+
+        # Rhab
+        # loop through every hab field but hab_field to calc Rhab_no
+        risk_diff_list = []  # for (5-rk) vals
+        for sub_hab_field in HAB_FIELDS:
+            risk_diff_list.append(5-feature.GetField(sub_hab_field))
+
+        r_nohab = 4.8 - 0.5 * numpy.sqrt(
+            (1.5 * max(risk_diff_list))**2 +
+            numpy.sum([x**2 for x in risk_diff_list]) -
+            max(risk_diff_list)**2)
+        feature.SetField('Rhab_all' % hab_field, r_nohab)
+
+        # Rt
         exposure_index = 1.0
         for risk_field in [
-                'Rgeomorphology', 'Rhab', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
+                'Rgeomorphology', 'Rhab_all', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
                 'Rrelief']:
             exposure_index *= feature.GetField(risk_field)
-        exposure_index = (exposure_index)*(1./7.)
+        exposure_index = (exposure_index)**(1./7.)
+        feature.SetField('Rt', exposure_index)
+
+        # Rt_nohaball
+        exposure_index = 1.0
+        for risk_field in [
+                'Rgeomorphology', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
+                'Rrelief']:
+            exposure_index *= feature.GetField(risk_field)
+        exposure_index = (exposure_index)**(1./6.)
+        feature.SetField('Rtnohab_all', exposure_index)
+
+        for hab_field in HAB_FIELDS:
+            exposure_index = 1.0
+            for risk_field in [
+                    'Rgeomorphology', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
+                    'Rrelief', 'Rnohab_%s' % hab_field]:
+                exposure_index *= feature.GetField(risk_field)
+            exposure_index = (exposure_index)**(1./7.)
+            feature.SetField('Rtnohab_%s' % hab_field, exposure_index)
+        cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
 
 
