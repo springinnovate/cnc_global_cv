@@ -138,7 +138,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
             (1.5 * max(risk_diff_list))**2 +
             numpy.sum([x**2 for x in risk_diff_list]) -
             max(risk_diff_list)**2)
-        feature.SetField('Rhab_all' % hab_field, r_nohab)
+        feature.SetField('Rhab_all', r_nohab)
 
         # Rt
         exposure_index = 1.0
