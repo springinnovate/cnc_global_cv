@@ -156,7 +156,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
                 'Rrelief']:
             exposure_index *= feature.GetField(risk_field)
         exposure_index = (exposure_index)**(1./6.)
-        feature.SetField('Rtnohab_all', exposure_index)
+        feature.SetField('Rt_nohab_all', exposure_index)
 
         for hab_field in HAB_FIELDS:
             exposure_index = 1.0
@@ -165,7 +165,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
                     'Rrelief', 'Rnohab_%s' % hab_field]:
                 exposure_index *= feature.GetField(risk_field)
             exposure_index = (exposure_index)**(1./7.)
-            feature.SetField('Rtnohab_%s' % hab_field, exposure_index)
+            feature.SetField('Rt_nohab_%s' % hab_field, exposure_index)
         cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
 
