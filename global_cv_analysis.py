@@ -137,6 +137,15 @@ HAB_FIELDS = [
     'reefs_all',
 ]
 
+# this is used to evaluate habitat value
+FINAL_HAB_FIELDS = [
+    'mangroves_forest',
+    'saltmarsh_wetland',
+    'seagrass',
+    'reefs_all',
+]
+
+
 REEF_FIELDS = [
     'reefs',
     'mesoamerican_barrier_reef',
@@ -1949,8 +1958,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
         # Rt
         exposure_index = 1.0
         for risk_field in [
-                'Rgeomorphology', 'Rhab_all', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
-                'Rrelief']:
+                'Rgeomorphology', 'Rhab_all', 'Rsurge', 'Rwave', 'Rwind',
+                'Rslr', 'Rrelief']:
             exposure_index *= feature.GetField(risk_field)
         exposure_index = (exposure_index)**(1./7.)
         feature.SetField('Rt', exposure_index)
@@ -2027,33 +2036,9 @@ def calculate_habitat_value(
 
     for habitat_id in habitat_fieldname_list:
         habitat_service_id = 'Rt_habservice_%s' % habitat_id
-        hab_vector_path, _, protective_distance = (
+        hab_raster_path, _, protective_distance = (
             habitat_vector_path_map[habitat_id])
 
-        # build a tree to test intersections with habitat and individual
-        # polygons
-        geometry_prep_list = []
-        hab_layer = hab_vector_path.GetLayer()
-        LOGGER.debug('loop through features for %s', hab_vector_path)
-        for index, feature in enumerate(hab_layer):
-            # for each feature, convert to shapely and make a prepared geometry
-            # type for easy intersection
-            feature_geom = feature.GetGeometryRef().Clone()
-            feature_geom_shapely = shapely.wkb.loads(
-                feature_geom.ExportToWkb())
-            feature_geom_prep = shapely.prepared.prep(feature_geom_shapely)
-            geometry_prep_list.append(
-                (index, feature_geom_shapely.bounds,
-                 [feature_geom_prep, feature_geom_shapely]))
-        LOGGER.debug('constructing the tree')
-        hab_r_tree = rtree.index.Index(geometry_prep_list)
-        LOGGER.debug('all done constructing rtree')
-
-        # buffer habitat is a polygon layer created by intersecting buffered
-        # shore points intersected with the polygon representation of the
-        # protective habitat that may protect those points. Visualized it will
-        # look like many clipped circles -- each circle being associated with
-        # a shore sample point.
         buffer_habitat_path = os.path.join(
             temp_workspace_dir, '%s_buffer.gpkg' % habitat_id)
         buffer_habitat_vector = gpkg_driver.CreateDataSource(
@@ -2069,7 +2054,12 @@ def calculate_habitat_value(
 
         shore_sample_point_layer.ResetReading()
         buffer_habitat_layer.StartTransaction()
-        for point_feature in shore_sample_point_layer:
+        for point_index, point_feature in enumerate(shore_sample_point_layer):
+            if point_index % 1000 == 0:
+                LOGGER.debug(
+                    'point buffering is %.2f%% complete',
+                    point_index / shore_sample_point_layer.GetFeatureCount() *
+                    100.0)
             # for each point, convert to local UTM to buffer out a given
             # distance then back to wgs84
             point_geom = point_feature.GetGeometryRef()
@@ -2082,38 +2072,14 @@ def calculate_habitat_value(
             buffer_poly_geom = point_geom.Buffer(protective_distance)
             buffer_poly_geom.Transform(utm_to_wgs84_transform)
 
-            buffer_poly_shapely = shapely.wkb.loads(
-                buffer_poly_geom.ExportToWkb())
-
-            # check if that buffered polygon intersects with any habitat
-            potential_intersect_list = list(hab_r_tree.intersection(
-                buffer_poly_shapely.bounds, objects='raw'))
-            if not potential_intersect_list:
-                # if no intersection, don't include in analysis
-                continue
-
-            any_intersections = False
-            for hab_poly in potential_intersect_list:
-                # hab_poly[0] = (prep geom, regular geom)
-                if not hab_poly[0][0].intersects(buffer_poly_shapely):
-                    continue
-                buffer_poly_shapely = buffer_poly_shapely.intersect(
-                    hab_poly[0][1])
-                any_intersections = True
-
-            if not any_intersections:
-                # buffer didn't interact with any habitat
-                continue
-
             buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
             buffer_point_feature.SetGeometry(buffer_poly_geom)
             buffer_point_feature.SetField(
-                habitat_service_id, point_feature.GetField(habitat_service_id))
+                habitat_service_id, 1.0)  #  TODO: for debuging point_feature.GetField(habitat_service_id))
             buffer_habitat_layer.CreateFeature(buffer_point_feature)
 
         # at this point every shore point has been buffered to the effective
-        # habitat distance, intersected with habitat geometry and rasterized
-        # by adding all overlapping services.
+        # habitat distance and the habitat service has been saved with it
         buffer_habitat_layer.CommitTransaction()
         habitat_value_raster_path = os.path.join(
             temp_workspace_dir, '%s_value.tif' % habitat_id)
@@ -2338,8 +2304,8 @@ def main(args):
     merge_cv_points_thread.join()
     LOGGER.debug('cv grid joined')
 
-    # calculate final risk
     add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+    LOGGER.debug('finishing cv vector risk')
 
 
 if __name__ == '__main__':
@@ -2347,13 +2313,15 @@ if __name__ == '__main__':
     parser.add_argument(
         'n_workers', help='Number of workers.')
     parser.add_argument(
-        '--skip_main', default=False, type=bool, help='Skip main CV analysis.')
+        '--skip_main', action='store_true', help='Skip main CV analysis.')
     args = parser.parse_args()
     try:
         if not args.skip_main:
             main(args)
+        local_lulc_raster_path = os.path.join(
+            ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
         calculate_habitat_value(
-            TARGET_CV_VECTOR_PATH, LULC_RASTER_URL, HAB_FIELDS,
+            TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
             HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
