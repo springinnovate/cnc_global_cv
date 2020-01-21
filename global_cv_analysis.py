@@ -1983,6 +1983,154 @@ def add_cv_vector_risk(cv_risk_vector_path):
     cv_risk_layer.CommitTransaction()
 
 
+def calculate_habitat_value(
+        shore_sample_point_vector, template_raster_path,
+        habitat_fieldname_list, habitat_vector_path_map, results_dir):
+    """Calculate habitat value.
+
+    Will create rasters in the `results_dir` directory named from the
+    `habitat_fieldname_list` values containing relative importance of
+    global habitat. The higher the value of a pixel the more important that
+    pixel of habitat is for protection of the coastline.
+
+    Parameters:
+        shore_sample_point_vector (str): path to CV analysis vector containing
+            at least the fields `Rt` and `Rt_nohab_[hab]` for all habitat
+            types under consideration.
+        template_raster_path (str): path to an existing raster whose size and
+            shape will be used to be the base of the raster that's created
+            for each habitat type.
+        habitat_fieldname_list (list): list of habitat ids to analyise.
+        habitat_vector_path_map (dict): maps fieldnames from
+            `habitat_fieldname_list` to 3-tuples of
+            (path to hab vector (str), risk val (float),
+             protective distance (float)).
+        results_dir (str): path to directory containing habitat back projection
+            results
+
+    Returns:
+        None.
+
+    """
+    try:
+        os.makedirs(results_dir)
+    except OSError:
+        pass
+    temp_workspace_dir = tempfile.mkdtemp(
+        dir=os.path.dirname(results_dir),
+        prefix='calculate_habitat_value_')
+
+    gpkg_driver = ogr.GetDriverByName('gpkg')
+    shore_sample_point_vector = gdal.OpenEx(
+        shore_sample_point_vector, gdal.OF_VECTOR)
+    shore_sample_point_layer = shore_sample_point_vector.GetLayer()
+
+    for habitat_id in habitat_fieldname_list:
+        habitat_service_id = 'Rt_habservice_%s' % habitat_id
+        hab_vector_path, _, protective_distance = (
+            habitat_vector_path_map[habitat_id])
+
+        # build a tree to test intersections with habitat and individual
+        # polygons
+        geometry_prep_list = []
+        hab_layer = hab_vector_path.GetLayer()
+        LOGGER.debug('loop through features for %s', hab_vector_path)
+        for index, feature in enumerate(hab_layer):
+            # for each feature, convert to shapely and make a prepared geometry
+            # type for easy intersection
+            feature_geom = feature.GetGeometryRef().Clone()
+            feature_geom_shapely = shapely.wkb.loads(
+                feature_geom.ExportToWkb())
+            feature_geom_prep = shapely.prepared.prep(feature_geom_shapely)
+            geometry_prep_list.append(
+                (index, feature_geom_shapely.bounds,
+                 [feature_geom_prep, feature_geom_shapely]))
+        LOGGER.debug('constructing the tree')
+        hab_r_tree = rtree.index.Index(geometry_prep_list)
+        LOGGER.debug('all done constructing rtree')
+
+        # buffer habitat is a polygon layer created by intersecting buffered
+        # shore points intersected with the polygon representation of the
+        # protective habitat that may protect those points. Visualized it will
+        # look like many clipped circles -- each circle being associated with
+        # a shore sample point.
+        buffer_habitat_path = os.path.join(
+            temp_workspace_dir, '%s_buffer.gpkg' % habitat_id)
+        buffer_habitat_vector = gpkg_driver.CreateDataSource(
+            buffer_habitat_path)
+        wgs84_srs = osr.SpatialReference()
+        wgs84_srs.ImportFromEPSG(4326)
+        buffer_habitat_layer = (
+            buffer_habitat_vector.CreateLayer(
+                habitat_service_id, wgs84_srs, ogr.wkbPolygon))
+        buffer_habitat_layer.CreateField(ogr.FieldDefn(
+            habitat_service_id, ogr.OFTReal))
+        buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
+
+        shore_sample_point_layer.ResetReading()
+        buffer_habitat_layer.StartTransaction()
+        for point_feature in shore_sample_point_layer:
+            # for each point, convert to local UTM to buffer out a given
+            # distance then back to wgs84
+            point_geom = point_feature.GetGeometryRef()
+            utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
+            wgs84_to_utm_transform = osr.CoordinateTransformation(
+                wgs84_srs, utm_srs)
+            utm_to_wgs84_transform = osr.CoordinateTransformation(
+                utm_srs, wgs84_srs)
+            point_geom.Transform(wgs84_to_utm_transform)
+            buffer_poly_geom = point_geom.Buffer(protective_distance)
+            buffer_poly_geom.Transform(utm_to_wgs84_transform)
+
+            buffer_poly_shapely = shapely.wkb.loads(
+                buffer_poly_geom.ExportToWkb())
+
+            # check if that buffered polygon intersects with any habitat
+            potential_intersect_list = list(hab_r_tree.intersection(
+                buffer_poly_shapely.bounds, objects='raw'))
+            if not potential_intersect_list:
+                # if no intersection, don't include in analysis
+                continue
+
+            any_intersections = False
+            for hab_poly in potential_intersect_list:
+                # hab_poly[0] = (prep geom, regular geom)
+                if not hab_poly[0][0].intersects(buffer_poly_shapely):
+                    continue
+                buffer_poly_shapely = buffer_poly_shapely.intersect(
+                    hab_poly[0][1])
+                any_intersections = True
+
+            if not any_intersections:
+                # buffer didn't interact with any habitat
+                continue
+
+            buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
+            buffer_point_feature.SetGeometry(buffer_poly_geom)
+            buffer_point_feature.SetField(
+                habitat_service_id, point_feature.GetField(habitat_service_id))
+            buffer_habitat_layer.CreateFeature(buffer_point_feature)
+
+        # at this point every shore point has been buffered to the effective
+        # habitat distance, intersected with habitat geometry and rasterized
+        # by adding all overlapping services.
+        buffer_habitat_layer.CommitTransaction()
+        habitat_value_raster_path = os.path.join(
+            temp_workspace_dir, '%s_value.tif' % habitat_id)
+        pygeoprocessing.new_raster_from_base(
+            template_raster_path, habitat_value_raster_path,
+            gdal.GDT_Float32, [-1],
+            raster_driver_creation_tuple=(
+                'GTIFF', (
+                    'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
+                    'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
+        pygeoprocessing.rasterize(
+            shore_sample_point_vector, habitat_value_raster_path,
+            option_list=[
+                'ATTRIBUTE=%s' % habitat_service_id,
+                'MERGE_ALG=ADD'])
+
+
 def main(args):
     """Entry point."""
     for dir_path in [
@@ -2194,45 +2342,6 @@ def main(args):
     add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
 
 
-def calculate_habitat_value(
-        shore_sample_point_vector, habitat_fieldname_list,
-        habitat_vector_path_map, results_dir):
-    """Calculate habitat value.
-
-    Will create rasters in the `results_dir` directory named from the
-    `habitat_fieldname_list` values containing relative importance of
-    global habitat. The higher the value of a pixel the more important that
-    pixel of habitat is for protection of the coastline.
-
-    Parameters:
-        shore_sample_point_vector (str): path to CV analysis vector containing
-            at least the fields `Rt` and `Rt_nohab_[hab]` for all habitat
-            types under consideration.
-        habitat_fieldname_list (list): list of habitat ids to analyise.
-        habitat_vector_path_map (dict): maps fieldnames from
-            `habitat_fieldname_list` to 3-tuples of
-            (path to hab vector (str), risk val (float),
-             protective distance (float)).
-        results_dir (str): path to directory containing habitat back projection
-            results
-
-    Returns:
-        None.
-
-    """
-    try:
-        os.makedirs(results_dir)
-    except OSError:
-        pass
-    temp_workspace_dir = tempfile.mkdtemp(
-        dir=os.path.dirname(results_dir),
-        prefix='calculate_habitat_value_')
-    for habitat_id in habitat_fieldname_list:
-        pygeoprocessing.rasterize(
-        vector_path, target_raster_path, burn_values=None, option_list=None,
-        layer_id=0, where_clause=None):
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Global CV analysis')
     parser.add_argument(
@@ -2244,7 +2353,7 @@ if __name__ == '__main__':
         if not args.skip_main:
             main(args)
         calculate_habitat_value(
-            TARGET_CV_VECTOR_PATH, HAB_FIELDS,
+            TARGET_CV_VECTOR_PATH, LULC_RASTER_URL, HAB_FIELDS,
             HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
