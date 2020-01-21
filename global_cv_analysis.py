@@ -37,9 +37,11 @@ CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
 GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'grid_workspaces')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
+HABITAT_VALUE_DIR = os.path.join(WORKSPACE_DIR, 'habitat_value')
 TARGET_NODATA = -1
 TARGET_CV_VECTOR_PATH = os.path.join(
     WORKSPACE_DIR, 'global_cv_analysis_result.gpkg')
+
 
 # [minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
@@ -995,6 +997,10 @@ def calculate_wind_and_wave(
     temp_fetch_rays_vector = None
     bathy_raster = None
     bathy_band = None
+    try:
+        shutil.rmtree(temp_workspace_dir)
+    except Exception:
+        LOGGER.exception('unable to remove %s', temp_workspace_dir)
 
 
 def calculate_slr(shore_point_vector_path, slr_raster_path, target_fieldname):
@@ -1895,6 +1901,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
             ogr.FieldDefn('Rnohab_%s' % hab_field, ogr.OFTReal))
         cv_risk_layer.CreateField(
             ogr.FieldDefn('Rt_nohab_%s' % hab_field, ogr.OFTReal))
+        cv_risk_layer.CreateField(
+            ogr.FieldDefn('Rt_habservice_%s' % hab_field, ogr.OFTReal))
     cv_risk_layer.CreateField(ogr.FieldDefn('Rhab_all', ogr.OFTReal))
     cv_risk_layer.CreateField(ogr.FieldDefn('Rt_nohab_all', ogr.OFTReal))
 
@@ -1948,22 +1956,29 @@ def add_cv_vector_risk(cv_risk_vector_path):
         feature.SetField('Rt', exposure_index)
 
         # Rt_nohaball
-        exposure_index = 1.0
+        nohab_exposure_index = 1.0
         for risk_field in [
                 'Rgeomorphology', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
                 'Rrelief']:
-            exposure_index *= feature.GetField(risk_field)
-        exposure_index = (exposure_index)**(1./6.)
-        feature.SetField('Rt_nohab_all', exposure_index)
+            nohab_exposure_index *= feature.GetField(risk_field)
+        nohab_exposure_index = (nohab_exposure_index)**(1./6.)
+        feature.SetField('Rt_nohab_all', nohab_exposure_index)
 
         for hab_field in HAB_FIELDS:
-            exposure_index = 1.0
+            nohab_exposure_index = 1.0
             for risk_field in [
                     'Rgeomorphology', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
                     'Rrelief', 'Rnohab_%s' % hab_field]:
-                exposure_index *= feature.GetField(risk_field)
-            exposure_index = (exposure_index)**(1./7.)
-            feature.SetField('Rt_nohab_%s' % hab_field, exposure_index)
+                nohab_exposure_index *= feature.GetField(risk_field)
+            nohab_exposure_index = (nohab_exposure_index)**(1./7.)
+            feature.SetField('Rt_nohab_%s' % hab_field, nohab_exposure_index)
+            # service is the difference between Rt without the habitat and
+            # Rt with all habitats.
+            hab_service = (
+                nohab_exposure_index -
+                feature.GetField('Rt', nohab_exposure_index))
+            feature.SetField('Rt_habservice_%s' % hab_field, hab_service)
+
         cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
 
@@ -2179,12 +2194,57 @@ def main(args):
     add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
 
 
+def calculate_habitat_value(
+        shore_sample_point_vector, habitat_fieldname_list,
+        habitat_vector_path_map, results_dir):
+    """Calculate habitat value.
+
+    Will create rasters in the `results_dir` directory named from the
+    `habitat_fieldname_list` values containing relative importance of
+    global habitat. The higher the value of a pixel the more important that
+    pixel of habitat is for protection of the coastline.
+
+    Parameters:
+        shore_sample_point_vector (str): path to CV analysis vector containing
+            at least the fields `Rt` and `Rt_nohab_[hab]` for all habitat
+            types under consideration.
+        habitat_fieldname_list (list): list of habitat ids to analyise.
+        habitat_vector_path_map (dict): maps fieldnames from
+            `habitat_fieldname_list` to 3-tuples of
+            (path to hab vector (str), risk val (float),
+             protective distance (float)).
+        results_dir (str): path to directory containing habitat back projection
+            results
+
+    Returns:
+        None.
+
+    """
+    try:
+        os.makedirs(results_dir)
+    except OSError:
+        pass
+    temp_workspace_dir = tempfile.mkdtemp(
+        dir=os.path.dirname(results_dir),
+        prefix='calculate_habitat_value_')
+    for habitat_id in habitat_fieldname_list:
+        pygeoprocessing.rasterize(
+        vector_path, target_raster_path, burn_values=None, option_list=None,
+        layer_id=0, where_clause=None):
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Global CV analysis')
     parser.add_argument(
         'n_workers', help='Number of workers.')
+    parser.add_argument(
+        '--skip_main', default=False, type=bool, help='Skip main CV analysis.')
     args = parser.parse_args()
     try:
-        main(args)
+        if not args.skip_main:
+            main(args)
+        calculate_habitat_value(
+            TARGET_CV_VECTOR_PATH, HAB_FIELDS,
+            HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
