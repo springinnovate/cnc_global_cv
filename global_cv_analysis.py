@@ -6,6 +6,7 @@ https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/
 
 """
 import argparse
+import bisect
 import collections
 import gzip
 import logging
@@ -1967,12 +1968,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
     cv_risk_layer.CommitTransaction()
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Global CV analysis')
-    parser.add_argument(
-        'n_workers', help='Number of workers.')
-    args = parser.parse_args()
-
+def main(args):
+    """Entry point."""
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
         try:
@@ -1985,7 +1982,7 @@ if __name__ == '__main__':
     for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
             CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
-        download_and_unzip_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=download_and_unzip,
             args=(zip_url, ECOSHARD_DIR, target_token_path),
             target_path_list=[target_token_path],
@@ -1996,7 +1993,7 @@ if __name__ == '__main__':
     for data_id, ecoshard_url in GLOBAL_DATA_URL_MAP.items():
         local_ecoshard_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(ecoshard_url))
-        download_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=ecoshard.download_url,
             args=(ecoshard_url, local_ecoshard_path),
             target_path_list=[local_ecoshard_path],
@@ -2008,7 +2005,7 @@ if __name__ == '__main__':
     global_wwiii_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(
             os.path.splitext(GLOBAL_WWIII_GZ_URL)[0]))
-    download_and_ungzip_global_wwiii_task = task_graph.add_task(
+    _ = task_graph.add_task(
         func=download_and_ungzip,
         args=(GLOBAL_WWIII_GZ_URL, global_wwiii_vector_path),
         target_path_list=[global_wwiii_vector_path],
@@ -2042,7 +2039,6 @@ if __name__ == '__main__':
         risk_distance_to_lulc_code[risk_distance].append(lulc_code)
 
     # this maps all the same type of codes together
-    lulc_code_to_reclass_value = {}
     habitat_raster_risk_map = dict(HABITAT_VECTOR_PATH_MAP)
     for risk_distance_tuple, lulc_code_list in sorted(
             risk_distance_to_lulc_code.items()):
@@ -2060,7 +2056,7 @@ if __name__ == '__main__':
         risk_distance_mask_path = os.path.join(
             CHURN_DIR, '%s_%s_mask.tif' % risk_distance_tuple)
 
-        risk_distance_mask_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=pygeoprocessing.reclassify_raster,
             args=(
                 (lulc_shore_mask_raster_path, 1), reclass_map,
@@ -2181,3 +2177,14 @@ if __name__ == '__main__':
 
     # calculate final risk
     add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Global CV analysis')
+    parser.add_argument(
+        'n_workers', help='Number of workers.')
+    args = parser.parse_args()
+    try:
+        main(args)
+    except Exception:
+        LOGGER.exception('error in main')
