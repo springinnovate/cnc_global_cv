@@ -1936,13 +1936,13 @@ def add_cv_vector_risk(cv_risk_vector_path):
             (1.5 * max(risk_diff_list))**2 +
             numpy.sum([x**2 for x in risk_diff_list]) -
             max(risk_diff_list)**2)
-        feature.SetField('Rhab_all' % hab_field, r_nohab)
+        feature.SetField('Rhab_all', r_nohab)
 
         # Rt
         exposure_index = 1.0
         for risk_field in [
-                'Rgeomorphology', 'Rhab_all', 'Rsurge', 'Rwave', 'Rwind',
-                'Rslr', 'Rrelief']:
+                'Rgeomorphology', 'Rhab_all', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
+                'Rrelief']:
             exposure_index *= feature.GetField(risk_field)
         exposure_index = (exposure_index)**(1./7.)
         feature.SetField('Rt', exposure_index)
@@ -1954,7 +1954,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
                 'Rrelief']:
             exposure_index *= feature.GetField(risk_field)
         exposure_index = (exposure_index)**(1./6.)
-        feature.SetField('Rtnohab_all', exposure_index)
+        feature.SetField('Rt_nohab_all', exposure_index)
 
         for hab_field in HAB_FIELDS:
             exposure_index = 1.0
@@ -1963,7 +1963,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
                     'Rrelief', 'Rnohab_%s' % hab_field]:
                 exposure_index *= feature.GetField(risk_field)
             exposure_index = (exposure_index)**(1./7.)
-            feature.SetField('Rtnohab_%s' % hab_field, exposure_index)
+            feature.SetField('Rt_nohab_%s' % hab_field, exposure_index)
         cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
 
