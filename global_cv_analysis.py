@@ -1985,9 +1985,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
             feature.SetField('Rt_nohab_%s' % hab_field, nohab_exposure_index)
             # service is the difference between Rt without the habitat and
             # Rt with all habitats.
-            hab_service = (
-                nohab_exposure_index -
-                feature.GetField('Rt', nohab_exposure_index))
+            hab_service = (nohab_exposure_index - feature.GetField('Rt'))
             feature.SetField('Rt_habservice_%s' % hab_field, hab_service)
 
         cv_risk_layer.SetFeature(feature)
@@ -2337,9 +2335,6 @@ def main(args):
     merge_cv_points_thread.join()
     LOGGER.debug('cv grid joined')
 
-    add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
-    LOGGER.debug('finishing cv vector risk')
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Global CV analysis')
@@ -2351,10 +2346,15 @@ if __name__ == '__main__':
     try:
         if not args.skip_main:
             main(args)
+        LOGGER.info('starting cv vector risk')
+        add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+        LOGGER.debug('finishing cv vector risk')
         local_lulc_raster_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
+        LOGGER.info('starting hab value calc')
         calculate_habitat_value(
             TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
             HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
+    LOGGER.info('completed successfully')
