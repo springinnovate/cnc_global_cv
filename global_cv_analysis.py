@@ -2323,9 +2323,6 @@ def main(args):
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
-        # TODO: for debugging
-        if index > 10:
-            break
 
     bb_work_queue.put(STOP_SENTINEL)
 
