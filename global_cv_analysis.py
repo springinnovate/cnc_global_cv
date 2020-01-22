@@ -403,7 +403,8 @@ def cv_grid_worker(
         global_dem_raster_path (str): path to a global dem/bathymetry raster.
         slr_raster_path (str): path to a sea level rise raster.
         wwiii_vector_path (str): path to wave watch III dataset that has
-            fields TODO FILL IN WHAT THEY ARE
+            fields REI_PCT[degree] and REI_V[degree] for degrees 0-360 in 22.5
+            degree increments.
         habitat_raster_path_map (dict): mapt a habitat id to a
             (raster path, risk, dist(m)) tuple. These are the raster versions
             of habitats to use in Rhab.
@@ -854,7 +855,7 @@ def calculate_wind_and_wave(
             compass_degree = int(sample_index * 360 / N_FETCH_RAYS)
             compass_theta = float(sample_index) / N_FETCH_RAYS * 360
 
-            # wwiii_point shoudl be closest point to shore point
+            # wwiii_point should be closest point to shore point
 
             rei_pct = wwiii_point[
                 'REI_PCT%d' % int(compass_theta)]
@@ -1970,7 +1971,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
                 'Rgeomorphology', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
                 'Rrelief']:
             nohab_exposure_index *= feature.GetField(risk_field)
-        nohab_exposure_index = (nohab_exposure_index)**(1./6.)
+        # the *5 is to get the "missing" habitat risk in there
+        nohab_exposure_index = (nohab_exposure_index*5)**(1./7.)
         feature.SetField('Rt_nohab_all', nohab_exposure_index)
 
         for hab_field in HAB_FIELDS:
@@ -2075,26 +2077,57 @@ def calculate_habitat_value(
             buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
             buffer_point_feature.SetGeometry(buffer_poly_geom)
             buffer_point_feature.SetField(
-                habitat_service_id, 1.0)  #  TODO: for debuging point_feature.GetField(habitat_service_id))
+                habitat_service_id, point_feature.GetField(habitat_service_id))
             buffer_habitat_layer.CreateFeature(buffer_point_feature)
+            buffer_point_feature = None
+            point_feature = None
+            buffer_poly_geom = None
+            point_geom = None
 
         # at this point every shore point has been buffered to the effective
         # habitat distance and the habitat service has been saved with it
         buffer_habitat_layer.CommitTransaction()
-        habitat_value_raster_path = os.path.join(
-            temp_workspace_dir, '%s_value.tif' % habitat_id)
+        buffer_habitat_layer = None
+        buffer_habitat_vector = None
+        value_coverage_raster_path = os.path.join(
+            temp_workspace_dir, '%s_value_cover.tif' % habitat_id)
         pygeoprocessing.new_raster_from_base(
-            template_raster_path, habitat_value_raster_path,
+            template_raster_path, value_coverage_raster_path,
             gdal.GDT_Float32, [-1],
             raster_driver_creation_tuple=(
                 'GTIFF', (
                     'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
                     'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
         pygeoprocessing.rasterize(
-            shore_sample_point_vector, habitat_value_raster_path,
+            buffer_habitat_path, value_coverage_raster_path,
             option_list=[
                 'ATTRIBUTE=%s' % habitat_service_id,
                 'MERGE_ALG=ADD'])
+
+        habitat_value_raster_path = os.path.join(
+            results_dir, '%s_value.tif' % habitat_id)
+
+        value_coverage_nodata = pygeoprocessing.get_raster_info(
+            value_coverage_raster_path)['nodata'][0]
+        hab_nodata = pygeoprocessing.get_raster_info(
+            hab_raster_path)['nodata'][0]
+
+        pygeoprocessing.raster_calculator(
+            [(value_coverage_raster_path, 1), (hab_raster_path, 1),
+             (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
+            intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
+            value_coverage_nodata)
+
+
+def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
+    """Only return values from a where a and b are defined."""
+    result = numpy.empty_like(array_a)
+    result[:] = nodata_a
+    valid_mask = (
+        ~numpy.isclose(array_a, nodata_a) &
+        ~numpy.isclose(array_b, nodata_b))
+    result[valid_mask] = array_a[valid_mask]
+    return result
 
 
 def main(args):
