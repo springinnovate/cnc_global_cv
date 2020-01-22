@@ -137,21 +137,19 @@ HAB_FIELDS = [
     'reefs_all',
 ]
 
-# this is used to evaluate habitat value
-FINAL_HAB_FIELDS = [
-    'mangroves_forest',
-    'saltmarsh_wetland',
-    'seagrass',
-    'reefs_all',
-]
-
-
 REEF_FIELDS = [
     'reefs',
     'mesoamerican_barrier_reef',
     'new_caledonian_barrier_reef',
     'great_barrier_reef',
     'keys_barrier_reef',
+]
+
+# this is used to evaluate habitat value
+FINAL_HAB_FIELDS = REEF_FIELDS + [
+    'mangroves_forest',
+    'saltmarsh_wetland',
+    'seagrass',
 ]
 
 
@@ -2074,8 +2072,16 @@ def calculate_habitat_value(
 
             buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
             buffer_point_feature.SetGeometry(buffer_poly_geom)
-            buffer_point_feature.SetField(
-                habitat_service_id, point_feature.GetField(habitat_service_id))
+
+            # reefs are special b
+            if habitat_id in REEF_FIELDS:
+                buffer_point_feature.SetField(
+                    habitat_service_id,
+                    point_feature.GetField('Rt_habservice_reefs_all'))
+            else:
+                buffer_point_feature.SetField(
+                    habitat_service_id,
+                    point_feature.GetField(habitat_service_id))
             buffer_habitat_layer.CreateFeature(buffer_point_feature)
             buffer_point_feature = None
             point_feature = None
@@ -2159,8 +2165,6 @@ def main(args):
             target_path_list=[local_ecoshard_path],
             task_name='download %s' % local_ecoshard_path)
         local_data_path_map[data_id] = local_ecoshard_path
-
-    ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
 
     global_wwiii_vector_path = os.path.join(
         ECOSHARD_DIR, os.path.basename(
@@ -2319,6 +2323,9 @@ def main(args):
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
+        # TODO: for debugging
+        if index > 10:
+            break
 
     bb_work_queue.put(STOP_SENTINEL)
 
@@ -2353,6 +2360,10 @@ if __name__ == '__main__':
             ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
         LOGGER.info('starting hab value calc')
         calculate_habitat_value(
+            TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
+            HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+        ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
+        calculate_habitat_population_value(
             TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
             HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
