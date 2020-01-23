@@ -2494,10 +2494,11 @@ if __name__ == '__main__':
         global_dem_raster_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
         calculate_habitat_population_value(
-            TARGET_CV_VECTOR_PATH, global_dem_raster_path,
+            TARGET_CV_VECTOR_PATH,
             [(ls_population_raster_path, 'total_pop'),
              (poor_population_raster_path, 'poor_pop')],
-            FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+            global_dem_raster_path, FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP,
+            HABITAT_VALUE_DIR)
         LOGGER.info('starting cv vector risk')
         add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
         LOGGER.debug('finishing cv vector risk')
