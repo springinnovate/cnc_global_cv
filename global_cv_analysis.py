@@ -75,7 +75,7 @@ GLOBAL_WWIII_GZ_URL = (
     'wave_watch_iii_md5_c8bb1ce4739e0a27ee608303c217ab5b.gpkg.gz')
 GLOBAL_DEM_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
+    'global_dem_md5_6cd388b33be2223979b68fa27711aa72.tif')
 LS_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
@@ -2038,7 +2038,7 @@ def calculate_habitat_population_value(
         prefix='calc_pop_coverage_')
     aligned_pop_path_list = [
         os.path.join(temp_workspace_dir, os.path.basename(path))
-        for path, _ in population_raster_path_id_list] + [dem_raster_path]
+        for path, _ in population_raster_path_id_list + [dem_raster_path]]
     base_pop_path_list = [
         path for path, _ in population_raster_path_id_list] + [dem_raster_path]
     target_pixel_size = pygeoprocessing.get_raster_info(
@@ -2072,9 +2072,14 @@ def calculate_habitat_population_value(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
         pop_sum_within_2km_path = os.path.join(
             temp_workspace_dir, '%s_pop_sum_within_2km.tif')
-        pygeoprocessing.convolve_2d(
-            pop_height_masked_path, kernel_2km_filepath,
-            pop_sum_within_2km_path, working_dir=temp_workspace_dir)
+        try:
+            pygeoprocessing.convolve_2d(
+                pop_height_masked_path, kernel_2km_filepath,
+                pop_sum_within_2km_path, working_dir=temp_workspace_dir)
+        except:
+            print(pop_height_masked_path)
+            print(kernel_2km_filepath)
+            raise
 
         # spread the 2km pop out by the hab distance
         for habitat_id, (hab_raster_path, _, prot_distance) in(
