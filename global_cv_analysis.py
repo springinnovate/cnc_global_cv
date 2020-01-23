@@ -2038,7 +2038,8 @@ def calculate_habitat_population_value(
         prefix='calc_pop_coverage_')
     aligned_pop_path_list = [
         os.path.join(temp_workspace_dir, os.path.basename(path))
-        for path, _ in population_raster_path_id_list + [dem_raster_path]]
+        for path, _ in population_raster_path_id_list + [
+            (dem_raster_path, None)]]
     base_pop_path_list = [
         path for path, _ in population_raster_path_id_list] + [dem_raster_path]
     target_pixel_size = pygeoprocessing.get_raster_info(
