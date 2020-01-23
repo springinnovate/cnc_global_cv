@@ -131,6 +131,7 @@ GLOBAL_DATA_URL_MAP = {
     'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
     'great_barrier_reef': GLOBAL_GREAT_BARRIER_REEF,
     'keys_barrier_reef': GLOBAL_KEYS_BARRIER_REEF,
+    'global_wwiii_vector_path': GLOBAL_WWIII_GZ_URL,
     }
 
 HAB_FIELDS = [
@@ -2279,7 +2280,7 @@ def download_data():
         artifacts.
 
     """
-    task_graph = taskgraph.TaskGraph(CHURN_DIR)
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
 
     for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
@@ -2302,21 +2303,27 @@ def download_data():
             task_name='download %s' % local_ecoshard_path)
         local_data_path_map[data_id] = local_ecoshard_path
 
-    global_wwiii_vector_path = os.path.join(
+    local_data_path_map['global_wwiii_vector_path'] = os.path.join(
         ECOSHARD_DIR, os.path.basename(
             os.path.splitext(GLOBAL_WWIII_GZ_URL)[0]))
+
     _ = task_graph.add_task(
         func=download_and_ungzip,
-        args=(GLOBAL_WWIII_GZ_URL, global_wwiii_vector_path),
-        target_path_list=[global_wwiii_vector_path],
-        task_name='download %s' % global_wwiii_vector_path)
+        args=(
+            GLOBAL_WWIII_GZ_URL,
+            local_data_path_map['global_wwiii_vector_path']),
+        target_path_list=[local_data_path_map['global_wwiii_vector_path']],
+        task_name=(
+            'download %s' % local_data_path_map['global_wwiii_vector_path']))
 
-    shore_buffer_vector_path = os.path.join(
+    local_data_path_map['shore_buffer_vector_path'] = os.path.join(
         ECOSHARD_DIR, os.path.basename(BUFFER_VECTOR_URL))
-    download_buffer_task = task_graph.add_task(
+    _ = task_graph.add_task(
         func=ecoshard.download_url,
-        args=(BUFFER_VECTOR_URL, shore_buffer_vector_path),
-        target_path_list=[shore_buffer_vector_path],
+        args=(
+            BUFFER_VECTOR_URL,
+            local_data_path_map['shore_buffer_vector_path']),
+        target_path_list=[local_data_path_map['shore_buffer_vector_path']],
         task_name='download global_vector')
 
     task_graph.join()
@@ -2345,16 +2352,20 @@ def calculate_degree_cell_cv(local_data_path_map):
         except OSError:
             pass
 
-    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
 
     lulc_shore_mask_raster_path = os.path.join(
         CHURN_DIR, 'lulc_masked_by_shore.tif')
     mask_lulc_by_shore_task = task_graph.add_task(
         func=pygeoprocessing.mask_raster,
-        args=((local_data_path_map['lulc'], 1), shore_buffer_vector_path,
-              lulc_shore_mask_raster_path),
+        args=(
+            (local_data_path_map['lulc'], 1),
+            local_data_path_map['shore_buffer_vector_path'],
+            lulc_shore_mask_raster_path),
         target_path_list=[lulc_shore_mask_raster_path],
-        ignore_path_list=[shore_buffer_vector_path],  # ignore mod by opening
+        # ignore filetime stamp modification by a read-only open
+        ignore_path_list=[
+            local_data_path_map['shore_buffer_vector_path']],
         task_name='mask shore')
 
     # each value in `risk_distance_to_lulc_code` can be lumped into one
@@ -2413,7 +2424,7 @@ def calculate_degree_cell_cv(local_data_path_map):
 
         merged_hab_raster_path = os.path.join(
             CHURN_DIR, 'merged_%s.tif' % vector_name)
-        mask_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=pygeoprocessing.raster_calculator,
             args=(
                 ((aligned_raster_path_list[0], 1),
@@ -2430,6 +2441,7 @@ def calculate_degree_cell_cv(local_data_path_map):
 
     task_graph.join()
     task_graph.close()
+    del task_graph
     LOGGER.debug(habitat_raster_risk_map)
 
     # convert tuple to strings for habitat risk so we can make fields for them
@@ -2460,7 +2472,7 @@ def calculate_degree_cell_cv(local_data_path_map):
                 local_data_path_map['geomorphology'],
                 local_data_path_map['slr'],
                 local_data_path_map['dem'],
-                global_wwiii_vector_path,
+                local_data_path_map['global_wwiii_vector_path'],
                 habitat_raster_risk_map,
                 ))
         cv_grid_worker_thread.start()
@@ -2470,7 +2482,7 @@ def calculate_degree_cell_cv(local_data_path_map):
     for path in [
             ls_population_raster_path,
             local_data_path_map['lulc'],
-            global_wwiii_vector_path,
+            local_data_path_map['global_wwiii_vector_path'],
             local_data_path_map['landmass'],
             local_data_path_map['shore_grid']]:
         LOGGER.info('%s: %s' % (os.path.exists(path), path))
@@ -2498,6 +2510,7 @@ def calculate_degree_cell_cv(local_data_path_map):
     # when workers are complete signal merger complete
     cv_point_complete_queue.put(STOP_SENTINEL)
     merge_cv_points_thread.join()
+
     LOGGER.debug('cv grid joined')
 
 
