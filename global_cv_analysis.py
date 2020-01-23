@@ -2271,16 +2271,15 @@ def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
     return result
 
 
-def main(args):
-    """Entry point."""
-    for dir_path in [
-            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
-        try:
-            os.makedirs(dir_path)
-        except OSError:
-            pass
+def download_data():
+    """Download all data necessary for analysis to run.
 
-    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
+    Returns:
+        dictionary mapping GLOBAL_DATA_URL_MAP keys to local paths for those
+        artifacts.
+
+    """
+    task_graph = taskgraph.TaskGraph(CHURN_DIR)
 
     for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
@@ -2320,7 +2319,33 @@ def main(args):
         target_path_list=[shore_buffer_vector_path],
         task_name='download global_vector')
 
-    task_graph.join()  # wait for everything to download
+    task_graph.join()
+    task_graph.close()
+    del task_graph
+
+    return local_data_path_map
+
+
+def calculate_degree_cell_cv(local_data_path_map):
+    """Process all global degree grids to calculate local hab risk.
+
+    Paramters:
+        args (dict):
+        local_data_path_map (dict): maps keys from GLOBAL_DATA_URL to the
+            local filepaths.
+
+    Returns:
+        None
+
+    """
+    for dir_path in [
+            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
+        try:
+            os.makedirs(dir_path)
+        except OSError:
+            pass
+
+    task_graph = taskgraph.TaskGraph(CHURN_DIR, -1, 5.0)
 
     lulc_shore_mask_raster_path = os.path.join(
         CHURN_DIR, 'lulc_masked_by_shore.tif')
@@ -2330,7 +2355,6 @@ def main(args):
               lulc_shore_mask_raster_path),
         target_path_list=[lulc_shore_mask_raster_path],
         ignore_path_list=[shore_buffer_vector_path],  # ignore mod by opening
-        dependent_task_list=[download_buffer_task],
         task_name='mask shore')
 
     # each value in `risk_distance_to_lulc_code` can be lumped into one
@@ -2484,9 +2508,18 @@ if __name__ == '__main__':
     parser.add_argument(
         '--skip_main', action='store_true', help='Skip main CV analysis.')
     args = parser.parse_args()
+
+    for dir_path in [
+            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
+        try:
+            os.makedirs(dir_path)
+        except OSError:
+            pass
+
     try:
+        local_data_path_map = download_data()
         if not args.skip_main:
-            main(args)
+            calculate_degree_cell_cv(local_data_path_map)
         LOGGER.info('calculating population back projection')
         ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
         poor_population_raster_path = os.path.join(
