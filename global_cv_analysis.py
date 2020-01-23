@@ -49,6 +49,7 @@ SHORE_POINT_SAMPLE_DISTANCE = 2000.0
 RELIEF_SAMPLE_DISTANCE = 5000.0
 N_FETCH_RAYS = 16  # this is hardcoded because of WWIII fields
 MAX_FETCH_DISTANCE = 60000
+M_PER_DEGREE = 111300.0
 
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
@@ -78,6 +79,9 @@ GLOBAL_DEM_RASTER_URL = (
 LS_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
+POVERTY_POPULATION_RASTER_URL = (
+    ECOSHARD_BUCKET_URL +
+    'Poverty_Count_2017_md5_55ed04469afbacfd77b086ff16bed6a7.tif')
 SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
@@ -122,6 +126,7 @@ GLOBAL_DATA_URL_MAP = {
     'landmass': GLOBAL_POLYGON_URL,
     'shore_grid': SHORE_GRID_URL,
     'lulc': LULC_RASTER_URL,
+    'poverty_count': POVERTY_POPULATION_RASTER_URL,
     'mesoamerican_barrier_reef': GLOBAL_MESOAMERICAN_BARRIER_REEF,
     'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
     'great_barrier_reef': GLOBAL_GREAT_BARRIER_REEF,
@@ -1138,7 +1143,8 @@ def calculate_rhab(
         kernel_filepath = '%s_kernel%s' % os.path.splitext(
             local_hab_raster_path)
         kernel_radius = [abs(eff_dist / x) for x in target_pixel_size]
-        create_averaging_kernel_raster(kernel_radius, kernel_filepath)
+        create_averaging_kernel_raster(
+            kernel_radius, kernel_filepath, normalize=True)
         hab_effective_area_raster_path = (
             '%s_effective_hab%s' % os.path.splitext(local_hab_raster_path))
         pygeoprocessing.convolve_2d(
@@ -1397,7 +1403,8 @@ def calculate_relief(
 
         kernel_filepath = os.path.join(
             tmp_working_dir, 'averaging_kernel.tif')
-        create_averaging_kernel_raster(kernel_radius, kernel_filepath)
+        create_averaging_kernel_raster(
+            kernel_radius, kernel_filepath, normalize=True)
 
         relief_path = os.path.join(tmp_working_dir, 'relief.tif')
         pygeoprocessing.convolve_2d(
@@ -1596,7 +1603,8 @@ def estimate_projected_pixel_size(
     return estimated_pixel_size
 
 
-def create_averaging_kernel_raster(radius_in_pixels, kernel_filepath):
+def create_averaging_kernel_raster(
+        radius_in_pixels, kernel_filepath, normalize=True):
     """Create a flat raster kernel with a 2d radius given.
 
     Parameters:
@@ -1638,7 +1646,8 @@ def create_averaging_kernel_raster(radius_in_pixels, kernel_filepath):
     LOGGER.debug(kernel_array)
 
     # normalize
-    kernel_array /= numpy.sum(kernel_array)
+    if normalize:
+        kernel_array /= numpy.sum(kernel_array)
     kernel_band.WriteArray(kernel_array)
     kernel_band = None
     kernel_raster = None
@@ -1983,11 +1992,139 @@ def add_cv_vector_risk(cv_risk_vector_path):
             feature.SetField('Rt_nohab_%s' % hab_field, nohab_exposure_index)
             # service is the difference between Rt without the habitat and
             # Rt with all habitats.
-            hab_service = (nohab_exposure_index - feature.GetField('Rt'))
+            hab_service = (feature.GetField('Rt') - nohab_exposure_index)
             feature.SetField('Rt_habservice_%s' % hab_field, hab_service)
 
         cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
+
+
+def calculate_habitat_population_value(
+        shore_sample_point_vector, population_raster_path_id_list,
+        dem_raster_path,
+        habitat_fieldname_list, habitat_vector_path_map, results_dir):
+    """Calculate population within protective range of habitat.
+
+    Parameters:
+        shore_sample_point_vector (str): path to a point shapefile that is only
+            used for referencing the points of interest on the coastline.
+        population_raster_path_id_list (list): list of (raster_path, field_id)
+            tuples. The values in the raster paths will be masked wehre it
+            overlaps with < 10m dem height and convolved within 2km. That
+            result is in turn spread onto the habitat coverage at a distance
+            of the protective distance of that habitat. These rasters are in
+            wgs84 lat/lng projection.
+        dem_raster_path (str): path to a dem used to mask population by height
+            in wgs84 lat/lng projection.
+        habitat_fieldname_list (list): list of habitat ids to analyse.
+        habitat_vector_path_map (dict): maps fieldnames from
+            `habitat_fieldname_list` to 3-tuples of
+            (path to hab raster (str), risk val (float),
+             protective distance (float)).
+        results_dir (str): path to directory containing habitat back projection
+            results
+
+    Returns:
+        None
+
+    """
+    try:
+        os.makedirs(results_dir)
+    except OSError:
+        pass
+    temp_workspace_dir = tempfile.mkdtemp(
+        dir=os.path.dirname(results_dir),
+        prefix='calc_pop_coverage_')
+    aligned_pop_path_list = [
+        os.path.join(temp_workspace_dir, os.path.basename(path))
+        for path, _ in population_raster_path_id_list] + [dem_raster_path]
+    base_pop_path_list = [
+        path for path, _ in population_raster_path_id_list] + [dem_raster_path]
+    target_pixel_size = os.path.get_raster_info(
+        base_pop_path_list[0])['pixel_size']
+    pygeoprocessing.align_and_resize_raster_stack(
+        base_pop_path_list, aligned_pop_path_list,
+        ['near'] * len(base_pop_path_list), target_pixel_size, 'intersection')
+
+    for pop_index, (_, pop_id) in enumerate(population_raster_path_id_list):
+        # mask to < 10m
+        pop_height_masked_path = os.path.join(
+            temp_workspace_dir, '%s_masked_by_10m.tif' % pop_id)
+        pop_nodata = pygeoprocessing.get_raster_info(
+            aligned_pop_path_list[pop_index])['nodata'][0]
+
+        pygeoprocessing.raster_calculator(
+            [(aligned_pop_path_list[pop_index], 1),
+             (aligned_pop_path_list[-1], 1),
+             (pop_nodata, 'raw')],  # the -1 index is the dem
+            mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
+            pop_nodata)
+
+        # spread the < 10m population out 2km
+        kernel_radius_2km = int(2000.0 / (
+            M_PER_DEGREE * abs(target_pixel_size[0])))
+        kernel_2km_filepath = os.path.join(
+            temp_workspace_dir, '2km_kernel.tif')
+        create_averaging_kernel_raster(
+            kernel_radius_2km, kernel_2km_filepath, normalize=False)
+        pop_sum_within_2km_path = os.apth.join(
+            temp_workspace_dir, '%s_pop_sum_within_2km.tif')
+        pygeoprocessing.convolve_2d(
+            pop_height_masked_path, kernel_2km_filepath,
+            pop_sum_within_2km_path, working_dir=temp_workspace_dir)
+
+        # spread the 2km pop out by the hab distance
+        for habitat_id, (hab_raster_path, _, prot_distance) in(
+                habitat_vector_path_map.iteritems()):
+            # make a kernel that goes out the distance of the protective
+            # distance of habitat
+            kernel_radius = int(prot_distance / (
+                M_PER_DEGREE * abs(target_pixel_size[0])))
+            kernel_filepath = os.path.join(
+                temp_workspace_dir, '%s_kernel.tif' % habitat_id)
+            create_averaging_kernel_raster(
+                kernel_radius, kernel_filepath, normalize=False)
+            population_hab_spread_raster_path = os.path.join(
+                temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
+            pygeoprocessing.convolve_2d(
+                pop_sum_within_2km_path, kernel_filepath,
+                population_hab_spread_raster_path,
+                working_dir=temp_workspace_dir)
+
+            hab_raster_info = pygeoprocessing.get_raster_info(hab_raster_path)
+
+            # warp pop result to overlay
+            clipped_pop_hab_spread_raster_path = os.path.join(
+                temp_workspace_dir, '%s_%s_spread_clipped.tif' % (
+                    habitat_id, pop_id))
+            pygeoprocessing.warp_raster(
+                population_hab_spread_raster_path,
+                hab_raster_info['pixel_size'],
+                clipped_pop_hab_spread_raster_path,
+                'near', target_bb=hab_raster_info['bounding_box'],
+                working_dir=temp_workspace_dir)
+
+            # mask the convolution by the habitat mask
+            hab_spread_nodata = pygeoprocessing.get_raster_info(
+                clipped_pop_hab_spread_raster_path)['nodata'][0]
+            hab_nodata = pygeoprocessing.get_raster_info(
+                hab_raster_path)['nodata'][0]
+            habitat_value_raster_path = os.path.join(
+                temp_workspace_dir, '%s_%s_cover.tif' % (habitat_id, pop_id))
+            pygeoprocessing.raster_calculator(
+                [(clipped_pop_hab_spread_raster_path, 1), (hab_raster_path, 1),
+                 (hab_spread_nodata, 'raw'), (hab_nodata, 'raw')],
+                intersect_raster_op, habitat_value_raster_path,
+                gdal.GDT_Float32, hab_spread_nodata)
+
+
+def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
+    """Set pop to 0 if > height."""
+    result = numpy.zeros(shape=pop_array)
+    valid_mask = (
+        (dem_array < mask_height) & ~numpy.isclose(pop_array, pop_nodata))
+    result[valid_mask] = pop_array[valid_mask]
+    return result
 
 
 def calculate_habitat_value(
@@ -2360,9 +2497,13 @@ if __name__ == '__main__':
             TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
             HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
         ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
+        poor_population_raster_path = os.path.join(
+            ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
         calculate_habitat_population_value(
-            TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
-            HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+            TARGET_CV_VECTOR_PATH,
+            [(ls_population_raster_path, 'total_pop'),
+             (poor_population_raster_path, 'poor_pop')],
+            FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
