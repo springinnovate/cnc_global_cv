@@ -2070,7 +2070,7 @@ def calculate_habitat_population_value(
             temp_workspace_dir, '2km_kernel.tif')
         create_averaging_kernel_raster(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
-        pop_sum_within_2km_path = os.apth.join(
+        pop_sum_within_2km_path = os.path.join(
             temp_workspace_dir, '%s_pop_sum_within_2km.tif')
         pygeoprocessing.convolve_2d(
             pop_height_masked_path, kernel_2km_filepath,
