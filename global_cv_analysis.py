@@ -2040,7 +2040,7 @@ def calculate_habitat_population_value(
         for path, _ in population_raster_path_id_list] + [dem_raster_path]
     base_pop_path_list = [
         path for path, _ in population_raster_path_id_list] + [dem_raster_path]
-    target_pixel_size = os.path.get_raster_info(
+    target_pixel_size = pygeoprocessing.get_raster_info(
         base_pop_path_list[0])['pixel_size']
     pygeoprocessing.align_and_resize_raster_stack(
         base_pop_path_list, aligned_pop_path_list,
