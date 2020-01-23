@@ -2487,6 +2487,15 @@ if __name__ == '__main__':
     try:
         if not args.skip_main:
             main(args)
+        LOGGER.info('calculating population back projection')
+        ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
+        poor_population_raster_path = os.path.join(
+            ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
+        calculate_habitat_population_value(
+            TARGET_CV_VECTOR_PATH,
+            [(ls_population_raster_path, 'total_pop'),
+             (poor_population_raster_path, 'poor_pop')],
+            FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
         LOGGER.info('starting cv vector risk')
         add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
         LOGGER.debug('finishing cv vector risk')
@@ -2496,14 +2505,6 @@ if __name__ == '__main__':
         calculate_habitat_value(
             TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
             HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
-        ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
-        poor_population_raster_path = os.path.join(
-            ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
-        calculate_habitat_population_value(
-            TARGET_CV_VECTOR_PATH,
-            [(ls_population_raster_path, 'total_pop'),
-             (poor_population_raster_path, 'poor_pop')],
-            FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
