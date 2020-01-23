@@ -2063,8 +2063,9 @@ def calculate_habitat_population_value(
             pop_nodata)
 
         # spread the < 10m population out 2km
-        kernel_radius_2km = int(2000.0 / (
+        n_pixels_in_2km = int(2000.0 / (
             M_PER_DEGREE * abs(target_pixel_size[0])))
+        kernel_radius_2km = [n_pixels_in_2km, n_pixels_in_2km]
         kernel_2km_filepath = os.path.join(
             temp_workspace_dir, '2km_kernel.tif')
         create_averaging_kernel_raster(
