@@ -2491,8 +2491,10 @@ if __name__ == '__main__':
         ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
         poor_population_raster_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
+        global_dem_raster_path = os.path.join(
+            ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
         calculate_habitat_population_value(
-            TARGET_CV_VECTOR_PATH,
+            TARGET_CV_VECTOR_PATH, global_dem_raster_path,
             [(ls_population_raster_path, 'total_pop'),
              (poor_population_raster_path, 'poor_pop')],
             FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
