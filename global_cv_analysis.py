@@ -2057,6 +2057,7 @@ def calculate_habitat_population_value(
         pygeoprocessing.raster_calculator(
             [(aligned_pop_path_list[pop_index], 1),
              (aligned_pop_path_list[-1], 1),
+             (10.0, 'raw'),  # mask to 10 meters
              (pop_nodata, 'raw')],  # the -1 index is the dem
             mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
             pop_nodata)
@@ -2121,7 +2122,7 @@ def calculate_habitat_population_value(
 
 def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
     """Set pop to 0 if > height."""
-    result = numpy.zeros(shape=pop_array)
+    result = numpy.zeros(shape=pop_array.shape)
     valid_mask = (
         (dem_array < mask_height) & ~numpy.isclose(pop_array, pop_nodata))
     result[valid_mask] = pop_array[valid_mask]
