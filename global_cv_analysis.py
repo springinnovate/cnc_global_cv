@@ -2411,7 +2411,7 @@ def clean_convolve_2d(
         working_dir=None):
     """Do 2D convolution but mask out any close to 0 values to 0."""
     temp_workspace_dir = tempfile.mkdtemp(
-        dir=os.path.dirname(signal_raster_band_path),
+        dir=os.path.dirname(signal_raster_band_path[0]),
         prefix='clean_convolve_2d')
     temp_target_raster = os.path.join(temp_workspace_dir, 'result.tif')
     pygeoprocessing.convolve_2d(
