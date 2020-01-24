@@ -2079,7 +2079,7 @@ def calculate_habitat_population_value(
 
         # spread the 2km pop out by the hab distance
         for habitat_id, (hab_raster_path, _, prot_distance) in(
-                habitat_vector_path_map.iteritems()):
+                habitat_vector_path_map.items()):
             # make a kernel that goes out the distance of the protective
             # distance of habitat
             kernel_radius = int(prot_distance / (
