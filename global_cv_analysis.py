@@ -2082,8 +2082,9 @@ def calculate_habitat_population_value(
                 habitat_vector_path_map.items()):
             # make a kernel that goes out the distance of the protective
             # distance of habitat
-            kernel_radius = int(prot_distance / (
+            n_pixels_in_prot_dist = int(prot_distance / (
                 M_PER_DEGREE * abs(target_pixel_size[0])))
+            kernel_radius = [n_pixels_in_prot_dist, n_pixels_in_prot_dist]
             kernel_filepath = os.path.join(
                 temp_workspace_dir, '%s_kernel.tif' % habitat_id)
             create_averaging_kernel_raster(
