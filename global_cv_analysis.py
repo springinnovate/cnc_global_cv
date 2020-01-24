@@ -2040,7 +2040,7 @@ def calculate_habitat_population_value(
     task_graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
     aligned_pop_raster_list = align_raster_list(
-        [x[0] for x in population_raster_path_id_list + [dem_raster_path]],
+        [x[0] for x in population_raster_path_id_list] + [dem_raster_path],
         temp_workspace_dir)
 
     for pop_index, (_, pop_id) in enumerate(population_raster_path_id_list):
