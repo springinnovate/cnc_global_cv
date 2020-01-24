@@ -75,7 +75,7 @@ GLOBAL_WWIII_GZ_URL = (
     'wave_watch_iii_md5_c8bb1ce4739e0a27ee608303c217ab5b.gpkg.gz')
 GLOBAL_DEM_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'global_dem_md5_6cd388b33be2223979b68fa27711aa72.tif')
+    'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
 LS_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
@@ -2002,8 +2002,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
 
 def calculate_habitat_population_value(
         shore_sample_point_vector, population_raster_path_id_list,
-        dem_raster_path,
-        habitat_fieldname_list, habitat_vector_path_map, results_dir):
+        dem_raster_path, habitat_fieldname_list, habitat_vector_path_map,
+        results_dir):
     """Calculate population within protective range of habitat.
 
     Parameters:
@@ -2259,13 +2259,13 @@ def calculate_habitat_value(
             hab_raster_path)['nodata'][0]
 
         # TODO: Traceback (most recent call last):
-  File "global_cv_analysis.py", line 2560, in <module>
-    HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
-  File "global_cv_analysis.py", line 2265, in calculate_habitat_value
-    value_coverage_nodata)
-  File "/usr/local/envs/py37/lib/python3.7/site-packages/pygeoprocessing-1.8.0.post76+h0ce0c93578b5-py3.7-linux-x86_64.egg/pygeoprocessing/geoprocessing.py", line 230, in raster_calculator
-    geospatial_info_set))
-ValueError: Input Rasters are not the same dimensions. The following raster are not identical {(80150, 15201), (129600, 64800)}
+        #   File "global_cv_analysis.py", line 2560, in <module>
+        #     HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+        #   File "global_cv_analysis.py", line 2265, in calculate_habitat_value
+        #     value_coverage_nodata)
+        #   File "/usr/local/envs/py37/lib/python3.7/site-packages/pygeoprocessing-1.8.0.post76+h0ce0c93578b5-py3.7-linux-x86_64.egg/pygeoprocessing/geoprocessing.py", line 230, in raster_calculator
+        #     geospatial_info_set))
+        # ValueError: Input Rasters are not the same dimensions. The following raster are not identical {(80150, 15201), (129600, 64800)}
 
 
         pygeoprocessing.raster_calculator(
