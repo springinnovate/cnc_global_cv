@@ -2395,10 +2395,11 @@ def align_raster_list(raster_path_list, target_directory):
         for path in raster_path_list]
     target_pixel_size = pygeoprocessing.get_raster_info(
         raster_path_list[0])['pixel_size']
+    LOGGER.debug('about to align: %s', str(raster_path_list))
     task_graph.add_task(
         func=pygeoprocessing.align_and_resize_raster_stack,
         args=(
-            [(path, 1) for path in raster_path_list], aligned_path_list,
+            raster_path_list, aligned_path_list,
             ['near'] * len(raster_path_list), target_pixel_size,
             'intersection'),
         target_path_list=aligned_path_list)
