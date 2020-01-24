@@ -2029,40 +2029,41 @@ def calculate_habitat_population_value(
         None
 
     """
-    try:
-        os.makedirs(results_dir)
-    except OSError:
-        pass
-    temp_workspace_dir = tempfile.mkdtemp(
-        dir=os.path.dirname(results_dir),
-        prefix='calc_pop_coverage_')
-    aligned_pop_path_list = [
-        os.path.join(temp_workspace_dir, os.path.basename(path))
-        for path, _ in population_raster_path_id_list + [
-            (dem_raster_path, None)]]
-    base_pop_path_list = [
-        path for path, _ in population_raster_path_id_list] + [dem_raster_path]
-    target_pixel_size = pygeoprocessing.get_raster_info(
-        base_pop_path_list[0])['pixel_size']
-    pygeoprocessing.align_and_resize_raster_stack(
-        base_pop_path_list, aligned_pop_path_list,
-        ['near'] * len(base_pop_path_list), target_pixel_size, 'intersection')
+    temp_workspace_dir = os.path.join(
+        results_dir, 'calc_pop_coverage_workspace')
+    taskgraph_working_dir = os.path.join(temp_workspace_dir, 'taskgraph')
+    for path in [results_dir, taskgraph_working_dir, temp_workspace_dir]:
+        try:
+            os.makedirs(results_dir)
+        except OSError:
+            pass
+    task_graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
+
+    aligned_pop_raster_list = align_raster_list(
+        [x[0] for x in population_raster_path_id_list + [dem_raster_path]],
+        temp_workspace_dir)
 
     for pop_index, (_, pop_id) in enumerate(population_raster_path_id_list):
         # mask to < 10m
         pop_height_masked_path = os.path.join(
             temp_workspace_dir, '%s_masked_by_10m.tif' % pop_id)
-        pop_nodata = pygeoprocessing.get_raster_info(
-            aligned_pop_path_list[pop_index])['nodata'][0]
+        raster_info = pygeoprocessing.get_raster_info(
+            aligned_pop_raster_list[pop_index])['nodata'][0]
 
-        pygeoprocessing.raster_calculator(
-            [(aligned_pop_path_list[pop_index], 1),
-             (aligned_pop_path_list[-1], 1),
-             (10.0, 'raw'),  # mask to 10 meters
-             (pop_nodata, 'raw')],  # the -1 index is the dem
-            mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
-            pop_nodata)
+        pop_height_mask_task = task_graph.add_task(
+            func=pygeoprocessing.raster_calculator,
+            args=(
+                [(aligned_pop_raster_list[pop_index], 1),
+                 (aligned_pop_raster_list[-1], 1),
+                 (10.0, 'raw'),  # mask to 10 meters
+                 (raster_info['nodata'][0], 'raw')],  # the -1 index is the dem
+                mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
+                raster_info['nodata'][0]),
+            target_path_list=[pop_height_masked_path],
+            task_name='pop height mask 10m %s' % pop_id)
+        pop_height_mask_task.join()
 
+        target_pixel_size = raster_info['pixel_size']
         # spread the < 10m population out 2km
         n_pixels_in_2km = int(2000.0 / (
             M_PER_DEGREE * abs(target_pixel_size[0])))
@@ -2072,10 +2073,15 @@ def calculate_habitat_population_value(
         create_averaging_kernel_raster(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
         pop_sum_within_2km_path = os.path.join(
-            temp_workspace_dir, '%s_pop_sum_within_2km.tif')
-        pygeoprocessing.convolve_2d(
-            (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
-            pop_sum_within_2km_path, working_dir=temp_workspace_dir)
+            temp_workspace_dir, '%s_pop_sum_within_2km.tif' % pop_id)
+        pop_sum_task = task_graph.add_task(
+            func=pygeoprocessing.convolve_2d,
+            args=(
+                (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
+                pop_sum_within_2km_path),
+            kwargs={'working_dir': temp_workspace_dir},
+            target_path_list=[pop_sum_within_2km_path],
+            task_name='pop sum w/in 2km %s' % pop_id)
 
         # spread the 2km pop out by the hab distance
         for habitat_id, (hab_raster_path, _, prot_distance) in (
@@ -2091,10 +2097,15 @@ def calculate_habitat_population_value(
                 kernel_radius, kernel_filepath, normalize=False)
             population_hab_spread_raster_path = os.path.join(
                 temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
-            pygeoprocessing.convolve_2d(
-                (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
-                population_hab_spread_raster_path,
-                working_dir=temp_workspace_dir)
+            spread_to_hab_task = task_graph.add_task(
+                func=pygeoprocessing.convolve_2d,
+                args=(
+                    (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
+                    population_hab_spread_raster_path),
+                kwargs={'working_dir': temp_workspace_dir},
+                target_path_list=[population_hab_spread_raster_path],
+                dependent_task_list=[pop_sum_task],
+                task_name='spread pop to hab %s %s ' % (pop_id, habitat_id))
 
             hab_raster_info = pygeoprocessing.get_raster_info(hab_raster_path)
 
@@ -2102,25 +2113,41 @@ def calculate_habitat_population_value(
             clipped_pop_hab_spread_raster_path = os.path.join(
                 temp_workspace_dir, '%s_%s_spread_clipped.tif' % (
                     habitat_id, pop_id))
-            pygeoprocessing.warp_raster(
-                population_hab_spread_raster_path,
-                hab_raster_info['pixel_size'],
-                clipped_pop_hab_spread_raster_path,
-                'near', target_bb=hab_raster_info['bounding_box'],
-                working_dir=temp_workspace_dir)
+            task_graph.add_task(
+                func=pygeoprocessing.warp_raster,
+                args=(
+                    population_hab_spread_raster_path,
+                    hab_raster_info['pixel_size'],
+                    clipped_pop_hab_spread_raster_path,
+                    'near'),
+                kwargs={
+                    'target_bb': hab_raster_info['bounding_box'],
+                    'working_dir': temp_workspace_dir},
+                target_path_list=[clipped_pop_hab_spread_raster_path],
+                dependent_task_list=[spread_to_hab_task],
+                task_name='spread to hab %s %s' % (pop_id, habitat_id))
 
             # mask the convolution by the habitat mask
+            task_graph.join()
             hab_spread_nodata = pygeoprocessing.get_raster_info(
                 clipped_pop_hab_spread_raster_path)['nodata'][0]
             hab_nodata = pygeoprocessing.get_raster_info(
                 hab_raster_path)['nodata'][0]
             habitat_value_raster_path = os.path.join(
                 results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
-            pygeoprocessing.raster_calculator(
-                [(clipped_pop_hab_spread_raster_path, 1), (hab_raster_path, 1),
-                 (hab_spread_nodata, 'raw'), (hab_nodata, 'raw')],
-                intersect_raster_op, habitat_value_raster_path,
-                gdal.GDT_Float32, hab_spread_nodata)
+            task_graph.add_task(
+                func=pygeoprocessing.raster_calculator,
+                args=(
+                    [(clipped_pop_hab_spread_raster_path, 1),
+                     (hab_raster_path, 1), (hab_spread_nodata, 'raw'),
+                     (hab_nodata, 'raw')],
+                    intersect_raster_op, habitat_value_raster_path,
+                    gdal.GDT_Float32, hab_spread_nodata),
+                target_path_list=[habitat_value_raster_path],
+                task_name='mask result %s %s' % (pop_id, habitat_id))
+    task_graph.join()
+    task_graph.close()
+    del task_graph
 
 
 def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
@@ -2267,7 +2294,6 @@ def calculate_habitat_value(
         #     geospatial_info_set))
         # ValueError: Input Rasters are not the same dimensions. The following raster are not identical {(80150, 15201), (129600, 64800)}
 
-
         pygeoprocessing.raster_calculator(
             [(value_coverage_raster_path, 1), (hab_raster_path, 1),
              (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
@@ -2345,6 +2371,43 @@ def download_data():
     del task_graph
 
     return local_data_path_map
+
+
+def align_raster_list(raster_path_list, target_directory):
+    """Aligns all the raster paths.
+
+    Rasters are aligned using the pixel size of the first raster and use
+    the intersection and near interpolation methods.
+
+    Parameters:
+        raster_path_list (list): list of str paths to rasters.
+        target_directory (str): path to a directory to hold the aligned
+            rasters.
+
+    Returns:
+        list of raster paths that are aligned with intersection and near
+            interpolation algorithm.
+
+    """
+    if not hasattr(align_raster_list, 'task_graph_map'):
+        align_raster_list.task_graph_map = {}
+    if target_directory not in align_raster_list.task_graph_map:
+        align_raster_list.task_graph_map[target_directory] = (
+            taskgraph.TaskGraph(target_directory, -1))
+    task_graph = align_raster_list.task_graph_map[target_directory]
+    aligned_path_list = [
+        os.path.join(target_directory, os.path.basename(path))
+        for path, _ in raster_path_list]
+    target_pixel_size = pygeoprocessing.get_raster_info(
+        raster_path_list[0])['pixel_size']
+    task_graph.add_task(
+        func=pygeoprocessing.align_and_resize_raster_stack,
+        args=(
+            raster_path_list, aligned_path_list,
+            ['near'] * len(raster_path_list), target_pixel_size,
+            'intersection'),
+        target_path_list=aligned_path_list)
+    return aligned_path_list
 
 
 def calculate_degree_cell_cv(local_data_path_map):
