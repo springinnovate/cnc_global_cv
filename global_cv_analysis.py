@@ -2392,7 +2392,7 @@ def align_raster_list(raster_path_list, target_directory):
     task_graph = align_raster_list.task_graph_map[target_directory]
     aligned_path_list = [
         os.path.join(target_directory, os.path.basename(path))
-        for path, _ in raster_path_list]
+        for path in raster_path_list]
     target_pixel_size = pygeoprocessing.get_raster_info(
         raster_path_list[0])['pixel_size']
     task_graph.add_task(
