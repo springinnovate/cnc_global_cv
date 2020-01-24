@@ -2030,7 +2030,7 @@ def calculate_habitat_population_value(
 
     """
     temp_workspace_dir = os.path.join(
-        results_dir, 'calc_pop_coverage_workspace')
+        results_dir, 'calc_pop_coverage_churn')
     taskgraph_working_dir = os.path.join(temp_workspace_dir, 'taskgraph')
     for path in [results_dir, taskgraph_working_dir, temp_workspace_dir]:
         try:
@@ -2098,7 +2098,7 @@ def calculate_habitat_population_value(
             population_hab_spread_raster_path = os.path.join(
                 temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
             spread_to_hab_task = task_graph.add_task(
-                func=pygeoprocessing.convolve_2d,
+                func=clean_convolve_2d,
                 args=(
                     (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
                     population_hab_spread_raster_path),
@@ -2188,13 +2188,12 @@ def calculate_habitat_value(
         None.
 
     """
-    try:
-        os.makedirs(results_dir)
-    except OSError:
-        pass
-    temp_workspace_dir = tempfile.mkdtemp(
-        dir=os.path.dirname(results_dir),
-        prefix='calculate_habitat_value_')
+    temp_workspace_dir = os.path.join(results_dir, 'hab_value_churn')
+    for dir_path in [results_dir, temp_workspace_dir]:
+        try:
+            os.makedirs(dir_path)
+        except OSError:
+            pass
 
     gpkg_driver = ogr.GetDriverByName('gpkg')
     shore_sample_point_vector = gdal.OpenEx(
@@ -2285,17 +2284,13 @@ def calculate_habitat_value(
         hab_nodata = pygeoprocessing.get_raster_info(
             hab_raster_path)['nodata'][0]
 
-        # TODO: Traceback (most recent call last):
-        #   File "global_cv_analysis.py", line 2560, in <module>
-        #     HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
-        #   File "global_cv_analysis.py", line 2265, in calculate_habitat_value
-        #     value_coverage_nodata)
-        #   File "/usr/local/envs/py37/lib/python3.7/site-packages/pygeoprocessing-1.8.0.post76+h0ce0c93578b5-py3.7-linux-x86_64.egg/pygeoprocessing/geoprocessing.py", line 230, in raster_calculator
-        #     geospatial_info_set))
-        # ValueError: Input Rasters are not the same dimensions. The following raster are not identical {(80150, 15201), (129600, 64800)}
+        aligned_value_hab_raster_path_list = align_raster_list(
+            [value_coverage_raster_path, hab_raster_path],
+            temp_workspace_dir)
 
         pygeoprocessing.raster_calculator(
-            [(value_coverage_raster_path, 1), (hab_raster_path, 1),
+            [(aligned_value_hab_raster_path_list[0], 1),
+             (aligned_value_hab_raster_path_list[1], 1),
              (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
             intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
             value_coverage_nodata)
@@ -2408,6 +2403,33 @@ def align_raster_list(raster_path_list, target_directory):
             'intersection'),
         target_path_list=aligned_path_list)
     return aligned_path_list
+
+
+def clean_convolve_2d(
+        signal_raster_band_path, kernel_raster_band_path, target_raster_path,
+        working_dir=None):
+    """Do 2D convolution but mask out any close to 0 values to 0."""
+    temp_workspace_dir = tempfile.mkdtemp(
+        dir=os.path.dirname(signal_raster_band_path),
+        prefix='clean_convolve_2d')
+    temp_target_raster = os.path.join(temp_workspace_dir, 'result.tif')
+    pygeoprocessing.convolve_2d(
+        (signal_raster_band_path, 1), (kernel_raster_band_path, 1),
+        temp_target_raster, working_dir=working_dir)
+    nodata = pygeoprocessing.get_raster_info(temp_target_raster)['nodata'][0]
+    pygeoprocessing.raster_calculator(
+        [(temp_target_raster, 1), (1e-6, 'raw')], set_almost_zero_to_zero,
+        target_raster_path, gdal.GDT_Float32, nodata)
+    try:
+        shutil.rmtree(temp_workspace_dir)
+    except OSError:
+        LOGGER.exception('unable to remove %s' % temp_workspace_dir)
+
+
+def set_almost_zero_to_zero(array, eps):
+    result = numpy.empty_like(array)
+    result[:] = numpy.where(numpy.abs(array) < eps, 0.0, array)
+    return result
 
 
 def calculate_degree_cell_cv(local_data_path_map):
