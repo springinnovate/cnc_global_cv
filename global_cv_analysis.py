@@ -2048,7 +2048,7 @@ def calculate_habitat_population_value(
         pop_height_masked_path = os.path.join(
             temp_workspace_dir, '%s_masked_by_10m.tif' % pop_id)
         raster_info = pygeoprocessing.get_raster_info(
-            aligned_pop_raster_list[pop_index])['nodata'][0]
+            aligned_pop_raster_list[pop_index])
 
         pop_height_mask_task = task_graph.add_task(
             func=pygeoprocessing.raster_calculator,
