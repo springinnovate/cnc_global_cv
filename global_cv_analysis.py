@@ -2415,7 +2415,7 @@ def clean_convolve_2d(
         prefix='clean_convolve_2d')
     temp_target_raster = os.path.join(temp_workspace_dir, 'result.tif')
     pygeoprocessing.convolve_2d(
-        (signal_raster_band_path, 1), (kernel_raster_band_path, 1),
+        signal_raster_band_path, kernel_raster_band_path,
         temp_target_raster, working_dir=working_dir)
     nodata = pygeoprocessing.get_raster_info(temp_target_raster)['nodata'][0]
     pygeoprocessing.raster_calculator(
