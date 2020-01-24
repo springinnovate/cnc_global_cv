@@ -2078,7 +2078,7 @@ def calculate_habitat_population_value(
             pop_sum_within_2km_path, working_dir=temp_workspace_dir)
 
         # spread the 2km pop out by the hab distance
-        for habitat_id, (hab_raster_path, _, prot_distance) in(
+        for habitat_id, (hab_raster_path, _, prot_distance) in (
                 habitat_vector_path_map.items()):
             # make a kernel that goes out the distance of the protective
             # distance of habitat
@@ -2115,7 +2115,7 @@ def calculate_habitat_population_value(
             hab_nodata = pygeoprocessing.get_raster_info(
                 hab_raster_path)['nodata'][0]
             habitat_value_raster_path = os.path.join(
-                temp_workspace_dir, '%s_%s_cover.tif' % (habitat_id, pop_id))
+                results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
             pygeoprocessing.raster_calculator(
                 [(clipped_pop_hab_spread_raster_path, 1), (hab_raster_path, 1),
                  (hab_spread_nodata, 'raw'), (hab_nodata, 'raw')],
@@ -2257,6 +2257,16 @@ def calculate_habitat_value(
             value_coverage_raster_path)['nodata'][0]
         hab_nodata = pygeoprocessing.get_raster_info(
             hab_raster_path)['nodata'][0]
+
+        # TODO: Traceback (most recent call last):
+  File "global_cv_analysis.py", line 2560, in <module>
+    HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+  File "global_cv_analysis.py", line 2265, in calculate_habitat_value
+    value_coverage_nodata)
+  File "/usr/local/envs/py37/lib/python3.7/site-packages/pygeoprocessing-1.8.0.post76+h0ce0c93578b5-py3.7-linux-x86_64.egg/pygeoprocessing/geoprocessing.py", line 230, in raster_calculator
+    geospatial_info_set))
+ValueError: Input Rasters are not the same dimensions. The following raster are not identical {(80150, 15201), (129600, 64800)}
+
 
         pygeoprocessing.raster_calculator(
             [(value_coverage_raster_path, 1), (hab_raster_path, 1),
