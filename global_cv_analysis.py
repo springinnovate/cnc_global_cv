@@ -2073,14 +2073,9 @@ def calculate_habitat_population_value(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
         pop_sum_within_2km_path = os.path.join(
             temp_workspace_dir, '%s_pop_sum_within_2km.tif')
-        try:
-            pygeoprocessing.convolve_2d(
-                pop_height_masked_path, kernel_2km_filepath,
-                pop_sum_within_2km_path, working_dir=temp_workspace_dir)
-        except:
-            print(pop_height_masked_path)
-            print(kernel_2km_filepath)
-            raise
+        pygeoprocessing.convolve_2d(
+            (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
+            pop_sum_within_2km_path, working_dir=temp_workspace_dir)
 
         # spread the 2km pop out by the hab distance
         for habitat_id, (hab_raster_path, _, prot_distance) in(
@@ -2096,7 +2091,7 @@ def calculate_habitat_population_value(
             population_hab_spread_raster_path = os.path.join(
                 temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
             pygeoprocessing.convolve_2d(
-                pop_sum_within_2km_path, kernel_filepath,
+                (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
                 population_hab_spread_raster_path,
                 working_dir=temp_workspace_dir)
 
