@@ -2135,7 +2135,7 @@ def calculate_habitat_population_value(
                 hab_raster_path)['nodata'][0]
             habitat_value_raster_path = os.path.join(
                 results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
-            task_graph.add_task(
+            hab_value_task = task_graph.add_task(
                 func=pygeoprocessing.raster_calculator,
                 args=(
                     [(clipped_pop_hab_spread_raster_path, 1),
@@ -2145,6 +2145,14 @@ def calculate_habitat_population_value(
                     gdal.GDT_Float32, hab_spread_nodata),
                 target_path_list=[habitat_value_raster_path],
                 task_name='mask result %s %s' % (pop_id, habitat_id))
+
+            task_graph.add_task(
+                func=ecoshard.build_overviews,
+                args=(habitat_value_raster_path,),
+                target_path_list=[habitat_value_raster_path],
+                dependent_task_list=[hab_value_task],
+                task_name='build overviews for %s' % habitat_value_raster_path)
+
     task_graph.join()
     task_graph.close()
     del task_graph
@@ -2294,6 +2302,8 @@ def calculate_habitat_value(
              (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
             intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
             value_coverage_nodata)
+
+        ecoshard.build_overviews(habitat_value_raster_path)
 
 
 def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
