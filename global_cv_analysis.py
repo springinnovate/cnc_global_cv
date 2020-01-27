@@ -1993,7 +1993,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
             feature.SetField('Rt_nohab_%s' % hab_field, nohab_exposure_index)
             # service is the difference between Rt without the habitat and
             # Rt with all habitats.
-            hab_service = (feature.GetField('Rt') - nohab_exposure_index)
+            hab_service = (nohab_exposure_index - feature.GetField('Rt'))
             feature.SetField('Rt_habservice_%s' % hab_field, hab_service)
 
         cv_risk_layer.SetFeature(feature)
