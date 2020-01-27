@@ -2327,6 +2327,7 @@ def download_data():
     """
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
 
+    local_data_path_map = {}
     for zip_url in [LS_POPULATION_RASTER_URL]:
         target_token_path = os.path.join(
             CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
@@ -2335,8 +2336,9 @@ def download_data():
             args=(zip_url, ECOSHARD_DIR, target_token_path),
             target_path_list=[target_token_path],
             task_name='download and unzip %s' % zip_url)
+    local_data_path_map['population'] = os.path.join(
+        ECOSHARD_DIR, os.path.basename(LS_POPULATION_RASTER_URL))
 
-    local_data_path_map = {}
 
     for data_id, ecoshard_url in GLOBAL_DATA_URL_MAP.items():
         local_ecoshard_path = os.path.join(
@@ -2590,7 +2592,7 @@ def calculate_degree_cell_cv(local_data_path_map):
         LOGGER.debug('starting worker %d', worker_id)
 
     for path in [
-            ls_population_raster_path,
+            local_data_path_map['population'],
             local_data_path_map['lulc'],
             local_data_path_map['global_wwiii_vector_path'],
             local_data_path_map['landmass'],
