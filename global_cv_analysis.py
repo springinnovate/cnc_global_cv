@@ -2216,7 +2216,7 @@ def calculate_habitat_value(
         shore_sample_point_vector, gdal.OF_VECTOR)
     shore_sample_point_layer = shore_sample_point_vector.GetLayer()
 
-    for habitat_id in habitat_fieldname_list:
+    for habitat_id in ['mangroves_forest']:  # habitat_fieldname_list:
         habitat_service_id = 'Rt_habservice_%s' % habitat_id
         hab_raster_path, _, protective_distance = (
             habitat_vector_path_map[habitat_id])
