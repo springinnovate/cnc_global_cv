@@ -1795,9 +1795,13 @@ def compute_wave_period(Un, Fn, dn):
     return T_n
 
 
-def merge_masks_op(mask_a, mask_b):
-    result = numpy.empty_like(mask_a)
-    return result
+def merge_masks_op(mask_a, mask_b, nodata_a, nodata_b, target_nodata):
+    result = numpy.empty(mask_a.shape, dtype=numpy.int8)
+    valid_mask = (~numpy.isclose(mask_a, nodata_a) |
+                  ~numpy.isclose(mask_b, nodata_b))
+    result[:] = target_nodata
+    result[valid_mask] = 1
+    return valid_mask
 
 
 def merge_cv_points(cv_vector_queue, target_cv_vector_path):
@@ -2253,7 +2257,7 @@ def calculate_habitat_value(
             buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
             buffer_point_feature.SetGeometry(buffer_poly_geom)
 
-            # reefs are special b
+            # reefs are special
             if habitat_id in REEF_FIELDS:
                 buffer_point_feature.SetField(
                     habitat_service_id,
@@ -2277,7 +2281,7 @@ def calculate_habitat_value(
             temp_workspace_dir, '%s_value_cover.tif' % habitat_id)
         pygeoprocessing.new_raster_from_base(
             template_raster_path, value_coverage_raster_path,
-            gdal.GDT_Float32, [-1],
+            gdal.GDT_Float32, [0],
             raster_driver_creation_tuple=(
                 'GTIFF', (
                     'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
@@ -2540,11 +2544,18 @@ def calculate_degree_cell_cv(local_data_path_map):
 
         merged_hab_raster_path = os.path.join(
             CHURN_DIR, 'merged_%s.tif' % vector_name)
+        nodata_0 = pygeoprocessing.get_raster_info(
+            aligned_raster_path_list[0])['nodata'][0]
+        nodata_1 = pygeoprocessing.get_raster_info(
+            aligned_raster_path_list[1])['nodata'][0]
         _ = task_graph.add_task(
             func=pygeoprocessing.raster_calculator,
             args=(
                 ((aligned_raster_path_list[0], 1),
-                 (aligned_raster_path_list[1], 1)), merge_masks_op,
+                 (aligned_raster_path_list[1], 1),
+                 (nodata_0, 'raw'),
+                 (nodata_1, 'raw'),
+                 (0, 'raw')), merge_masks_op,
                 merged_hab_raster_path, gdal.GDT_Int16, 0),
             target_path_list=[merged_hab_raster_path],
             dependent_task_list=[align_task],
