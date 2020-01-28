@@ -2647,6 +2647,12 @@ if __name__ == '__main__':
         'n_workers', help='Number of workers.')
     parser.add_argument(
         '--skip_main', action='store_true', help='Skip main CV analysis.')
+    parser.add_argument(
+        '--skip_hab_pop_value', action='store_true')
+    parser.add_argument(
+        '--skip_cv_vector_risk', action='store_true')
+    parser.add_argument(
+        '--skip_hab_value', action='store_true')
     args = parser.parse_args()
 
     for dir_path in [
@@ -2666,21 +2672,24 @@ if __name__ == '__main__':
             ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
         global_dem_raster_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
-        calculate_habitat_population_value(
-            TARGET_CV_VECTOR_PATH,
-            [(ls_population_raster_path, 'total_pop'),
-             (poor_population_raster_path, 'poor_pop')],
-            global_dem_raster_path, FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP,
-            HABITAT_VALUE_DIR)
+        if not args.skip_hab_pop_value:
+            calculate_habitat_population_value(
+                TARGET_CV_VECTOR_PATH,
+                [(ls_population_raster_path, 'total_pop'),
+                 (poor_population_raster_path, 'poor_pop')],
+                global_dem_raster_path, FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP,
+                HABITAT_VALUE_DIR)
         LOGGER.info('starting cv vector risk')
-        add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
-        LOGGER.debug('finishing cv vector risk')
-        local_lulc_raster_path = os.path.join(
-            ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
-        LOGGER.info('starting hab value calc')
-        calculate_habitat_value(
-            TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
-            HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+        if not args.skip_cv_vector_risk:
+            add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+            LOGGER.debug('finishing cv vector risk')
+        if not args.skip_hab_value:
+            local_lulc_raster_path = os.path.join(
+                ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
+            LOGGER.info('starting hab value calc')
+            calculate_habitat_value(
+                TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
+                HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
