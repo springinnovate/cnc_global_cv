@@ -1796,12 +1796,12 @@ def compute_wave_period(Un, Fn, dn):
 
 
 def merge_masks_op(mask_a, mask_b, nodata_a, nodata_b, target_nodata):
-    result = numpy.empty(mask_a.shape, dtype=numpy.int8)
+    result = numpy.empty(mask_a.shape, dtype=numpy.int16)
     valid_mask = (~numpy.isclose(mask_a, nodata_a) |
                   ~numpy.isclose(mask_b, nodata_b))
     result[:] = target_nodata
     result[valid_mask] = 1
-    return valid_mask
+    return result
 
 
 def merge_cv_points(cv_vector_queue, target_cv_vector_path):
