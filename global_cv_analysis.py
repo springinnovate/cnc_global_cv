@@ -2673,7 +2673,7 @@ def calculate_degree_cell_cv(local_data_path_map):
 
 
 def make_buffered_point_raster_mask(
-        shore_sample_point_layer, template_raster_path, workspace_dir,
+        shore_sample_point_vector_path, template_raster_path, workspace_dir,
         habitat_id,
         protective_distance, target_buffer_raster_path):
     gpkg_driver = ogr.GetDriverByName('GPKG')
@@ -2688,7 +2688,9 @@ def make_buffered_point_raster_mask(
             habitat_id, wgs84_srs, ogr.wkbPolygon))
     buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
 
-    shore_sample_point_layer.ResetReading()
+    shore_sample_point_vector = gdal.OpenEx(
+        shore_sample_point_vector_path, gdal.OF_VECTOR)
+    shore_sample_point_layer = shore_sample_point_vector.GetLayer()
     buffer_habitat_layer.StartTransaction()
     for point_index, point_feature in enumerate(shore_sample_point_layer):
         if point_index % 1000 == 0:
