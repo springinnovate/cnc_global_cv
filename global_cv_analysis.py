@@ -2009,16 +2009,16 @@ def add_cv_vector_risk(cv_risk_vector_path):
 
 
 def calculate_habitat_population_value(
-        shore_sample_point_vector, population_raster_path_id_list,
+        shore_sample_point_vector_path, population_raster_path_id_list,
         dem_raster_path, habitat_fieldname_list, habitat_vector_path_map,
         results_dir):
     """Calculate population within protective range of habitat.
 
     Parameters:
-        shore_sample_point_vector (str): path to a point shapefile that is only
+        shore_sample_point_vector_path (str): path to a point shapefile that is only
             used for referencing the points of interest on the coastline.
         population_raster_path_id_list (list): list of (raster_path, field_id)
-            tuples. The values in the raster paths will be masked wehre it
+            tuples. The values in the raster paths will be masked where it
             overlaps with < 10m dem height and convolved within 2km. That
             result is in turn spread onto the habitat coverage at a distance
             of the protective distance of that habitat. These rasters are in
@@ -2092,8 +2092,9 @@ def calculate_habitat_population_value(
             task_name='pop sum w/in 2km %s' % pop_id)
 
         # spread the 2km pop out by the hab distance
-        for habitat_id, (hab_raster_path, _, prot_distance) in (
-                habitat_vector_path_map.items()):
+        for habitat_id in habitat_fieldname_list:
+            hab_raster_path, _, prot_distance = (
+                habitat_vector_path_map[habitat_id])
             # make a kernel that goes out the distance of the protective
             # distance of habitat
             n_pixels_in_prot_dist = max(1, int(prot_distance / (
@@ -2143,14 +2144,32 @@ def calculate_habitat_population_value(
                 hab_raster_path)['nodata'][0]
             habitat_value_raster_path = os.path.join(
                 results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
+
+            # TODO: clip the habitat mask to the protective distance of the shore
+            # points
+            buffered_point_raster_mask_path = os.path.join(
+                temp_workspace_dir, '%s_buffer_mask.tif' % habitat_id)
+            buffered_raster_task = task_graph.add_task(
+                func=make_buffered_point_raster_mask,
+                args=(
+                    shore_sample_point_vector_path,
+                    clipped_pop_hab_spread_raster_path,
+                    temp_workspace_dir, habitat_id,
+                    prot_distance, buffered_point_raster_mask_path),
+                target_path_list=[buffered_point_raster_mask_path],
+                task_name='buffered point for %s' % habitat_id)
+
             hab_value_task = task_graph.add_task(
                 func=pygeoprocessing.raster_calculator,
                 args=(
                     [(clipped_pop_hab_spread_raster_path, 1),
-                     (hab_raster_path, 1), (hab_spread_nodata, 'raw'),
+                     (hab_raster_path, 1),
+                     (buffered_point_raster_mask_path, 1),
+                     (hab_spread_nodata, 'raw'),
                      (hab_nodata, 'raw')],
-                    intersect_raster_op, habitat_value_raster_path,
+                    intersect_and_mask_raster_op, habitat_value_raster_path,
                     gdal.GDT_Float32, hab_spread_nodata),
+                dependent_task_list=[buffered_raster_task],
                 target_path_list=[habitat_value_raster_path],
                 task_name='mask result %s %s' % (pop_id, habitat_id))
 
@@ -2216,7 +2235,7 @@ def calculate_habitat_value(
         shore_sample_point_vector, gdal.OF_VECTOR)
     shore_sample_point_layer = shore_sample_point_vector.GetLayer()
 
-    for habitat_id in ['mangroves_forest']:  # habitat_fieldname_list:
+    for habitat_id in habitat_fieldname_list:
         habitat_service_id = 'Rt_habservice_%s' % habitat_id
         hab_raster_path, _, protective_distance = (
             habitat_vector_path_map[habitat_id])
@@ -2312,6 +2331,18 @@ def calculate_habitat_value(
             value_coverage_nodata)
 
         ecoshard.build_overviews(habitat_value_raster_path)
+
+
+def intersect_and_mask_raster_op(
+        array_a, array_b, mask_array, nodata_a, nodata_b):
+    result = numpy.empty_like(array_a)
+    result[:] = nodata_a
+    valid_mask = (
+        ~numpy.isclose(array_a, nodata_a) &
+        ~numpy.isclose(array_b, nodata_b) &
+        (mask_array == 1))
+    result[valid_mask] = array_a[valid_mask]
+    return result
 
 
 def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
@@ -2641,6 +2672,66 @@ def calculate_degree_cell_cv(local_data_path_map):
     LOGGER.debug('cv grid joined')
 
 
+def make_buffered_point_raster_mask(
+        shore_sample_point_layer, template_raster_path, workspace_dir,
+        habitat_id,
+        protective_distance, target_buffer_raster_path):
+    gpkg_driver = ogr.GetDriverByName('GPKG')
+    buffer_habitat_path = os.path.join(
+        workspace_dir, '%s_buffer.gpkg' % habitat_id)
+    buffer_habitat_vector = gpkg_driver.CreateDataSource(
+        buffer_habitat_path)
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    buffer_habitat_layer = (
+        buffer_habitat_vector.CreateLayer(
+            habitat_id, wgs84_srs, ogr.wkbPolygon))
+    buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
+
+    shore_sample_point_layer.ResetReading()
+    buffer_habitat_layer.StartTransaction()
+    for point_index, point_feature in enumerate(shore_sample_point_layer):
+        if point_index % 1000 == 0:
+            LOGGER.debug(
+                'point buffering is %.2f%% complete',
+                point_index / shore_sample_point_layer.GetFeatureCount() *
+                100.0)
+        # for each point, convert to local UTM to buffer out a given
+        # distance then back to wgs84
+        point_geom = point_feature.GetGeometryRef()
+        utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
+        wgs84_to_utm_transform = osr.CoordinateTransformation(
+            wgs84_srs, utm_srs)
+        utm_to_wgs84_transform = osr.CoordinateTransformation(
+            utm_srs, wgs84_srs)
+        point_geom.Transform(wgs84_to_utm_transform)
+        buffer_poly_geom = point_geom.Buffer(protective_distance)
+        buffer_poly_geom.Transform(utm_to_wgs84_transform)
+
+        buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
+        buffer_point_feature.SetGeometry(buffer_poly_geom)
+        buffer_habitat_layer.CreateFeature(buffer_point_feature)
+        buffer_point_feature = None
+        point_feature = None
+        buffer_poly_geom = None
+        point_geom = None
+
+    # at this point every shore point has been buffered to the effective
+    # habitat distance and the habitat service has been saved with it
+    buffer_habitat_layer.CommitTransaction()
+    buffer_habitat_layer = None
+    buffer_habitat_vector = None
+    pygeoprocessing.new_raster_from_base(
+        template_raster_path, target_buffer_raster_path,
+        gdal.GDT_Float32, [0],
+        raster_driver_creation_tuple=(
+            'GTIFF', (
+                'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
+                'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
+    pygeoprocessing.rasterize(
+        buffer_habitat_path, target_buffer_raster_path, burn_values=[1])
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Global CV analysis')
     parser.add_argument(
@@ -2672,24 +2763,24 @@ if __name__ == '__main__':
             ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
         global_dem_raster_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
+        LOGGER.info('starting cv vector risk')
+        if not args.skip_cv_vector_risk:
+            add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+            LOGGER.debug('finishing cv vector risk')
         if not args.skip_hab_pop_value:
             calculate_habitat_population_value(
                 TARGET_CV_VECTOR_PATH,
                 [(ls_population_raster_path, 'total_pop'),
                  (poor_population_raster_path, 'poor_pop')],
-                global_dem_raster_path, FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP,
-                HABITAT_VALUE_DIR)
-        LOGGER.info('starting cv vector risk')
-        if not args.skip_cv_vector_risk:
-            add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
-            LOGGER.debug('finishing cv vector risk')
+                global_dem_raster_path, FINAL_HAB_FIELDS,
+                HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
         if not args.skip_hab_value:
             local_lulc_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
             LOGGER.info('starting hab value calc')
             calculate_habitat_value(
-                TARGET_CV_VECTOR_PATH, local_lulc_raster_path, FINAL_HAB_FIELDS,
-                HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+                TARGET_CV_VECTOR_PATH, local_lulc_raster_path,
+                FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
