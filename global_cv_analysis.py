@@ -2784,11 +2784,11 @@ if __name__ == '__main__':
                     HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
             if not args.skip_hab_value:
                 local_lulc_raster_path = os.path.join(
-                    ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
+                    ECOSHARD_DIR, os.path.basename(landcover_url))
                 LOGGER.info('starting hab value calc')
                 calculate_habitat_value(
                     TARGET_CV_VECTOR_PATH, local_lulc_raster_path,
                     FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
-        except Exception:
-            LOGGER.exception('error in main')
+    except Exception:
+        LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
