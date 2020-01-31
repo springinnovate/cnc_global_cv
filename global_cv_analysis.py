@@ -2145,8 +2145,6 @@ def calculate_habitat_population_value(
             habitat_value_raster_path = os.path.join(
                 results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
 
-            # TODO: clip the habitat mask to the protective distance of the shore
-            # points
             buffered_point_raster_mask_path = os.path.join(
                 temp_workspace_dir, '%s_buffer_mask.tif' % habitat_id)
             buffered_raster_task = task_graph.add_task(
