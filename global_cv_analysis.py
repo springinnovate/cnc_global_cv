@@ -2485,7 +2485,7 @@ def set_almost_zero_to_zero(array, eps):
     return result
 
 
-def calculate_degree_cell_cv(local_data_path_map, target_vector_cv_path):
+def calculate_degree_cell_cv(local_data_path_map, target_cv_vector_path):
     """Process all global degree grids to calculate local hab risk.
 
     Paramters:
@@ -2773,10 +2773,10 @@ if __name__ == '__main__':
             if not args.skip_main:
                 landcover_basename = os.path.splitext(
                     os.path.basename(landcover_url))[0]
-                target_vector_cv_path = os.path.join(
+                target_cv_vector_path = os.path.join(
                     WORKSPACE_DIR, '%s.gpkg' % landcover_basename)
                 calculate_degree_cell_cv(
-                    local_data_path_map, target_vector_cv_path)
+                    local_data_path_map, target_cv_vector_path)
             LOGGER.info('calculating population back projection')
             ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
             poor_population_raster_path = os.path.join(
