@@ -42,6 +42,8 @@ TARGET_NODATA = -1
 TARGET_CV_VECTOR_PATH = os.path.join(
     WORKSPACE_DIR, 'global_cv_analysis_result.gpkg')
 
+# landcover inputs come from this file
+LANDCOVER_RASTER_DATA_FILE = 'GLOBAL_CV_DATA_INPUTS.txt'
 
 # [minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
@@ -59,10 +61,6 @@ GLOBAL_POLYGON_URL = (
     'ipbes-cv_global_polygon_simplified_geometries_'
     'md5_653118dde775057e24de52542b01eaee.gpkg')
 
-LULC_RASTER_URL = (
-    ECOSHARD_BUCKET_URL +
-    'ESACCI-LC-L4-LCCS-Map-300m-P1Y-2015-v2.0.7_'
-    'md5_1254d25f937e6d9bdee5779d377c5aa4.tif')
 BUFFER_VECTOR_URL = (
     ECOSHARD_BUCKET_URL +
     'buffered_global_shore_5km_md5_a68e1049c1c03673add014cd29b7b368.gpkg')
@@ -125,7 +123,6 @@ GLOBAL_DATA_URL_MAP = {
     'slr': SLR_RASTER_URL,
     'landmass': GLOBAL_POLYGON_URL,
     'shore_grid': SHORE_GRID_URL,
-    'lulc': LULC_RASTER_URL,
     'poverty_count': POVERTY_POPULATION_RASTER_URL,
     'mesoamerican_barrier_reef': GLOBAL_MESOAMERICAN_BARRIER_REEF,
     'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
@@ -2354,8 +2351,12 @@ def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
     return result
 
 
-def download_data():
+def download_data(**kwargs):
     """Download all data necessary for analysis to run.
+
+    Parameters:
+        kwargs (dict): dictionary of key/url pairs of data to download that
+            will also be added to the result.
 
     Returns:
         dictionary mapping GLOBAL_DATA_URL_MAP keys to local paths for those
@@ -2376,8 +2377,7 @@ def download_data():
     local_data_path_map['population'] = os.path.join(
         ECOSHARD_DIR, os.path.basename(LS_POPULATION_RASTER_URL))
 
-
-    for data_id, ecoshard_url in GLOBAL_DATA_URL_MAP.items():
+    for data_id, ecoshard_url in {**GLOBAL_DATA_URL_MAP, **kwargs}.items():
         local_ecoshard_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(ecoshard_url))
         _ = task_graph.add_task(
@@ -2482,7 +2482,7 @@ def set_almost_zero_to_zero(array, eps):
     return result
 
 
-def calculate_degree_cell_cv(local_data_path_map):
+def calculate_degree_cell_cv(local_data_path_map, target_vector_cv_path):
     """Process all global degree grids to calculate local hab risk.
 
     Paramters:
@@ -2657,7 +2657,7 @@ def calculate_degree_cell_cv(local_data_path_map):
 
     merge_cv_points_thread = threading.Thread(
         target=merge_cv_points,
-        args=(cv_point_complete_queue, TARGET_CV_VECTOR_PATH))
+        args=(cv_point_complete_queue, target_cv_vector_path))
     merge_cv_points_thread.start()
 
     for cv_grid_worker_thread in cv_grid_worker_list:
@@ -2754,33 +2754,41 @@ if __name__ == '__main__':
             pass
 
     try:
-        local_data_path_map = download_data()
-        if not args.skip_main:
-            calculate_degree_cell_cv(local_data_path_map)
-        LOGGER.info('calculating population back projection')
-        ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
-        poor_population_raster_path = os.path.join(
-            ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
-        global_dem_raster_path = os.path.join(
-            ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
-        LOGGER.info('starting cv vector risk')
-        if not args.skip_cv_vector_risk:
-            add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
-            LOGGER.debug('finishing cv vector risk')
-        if not args.skip_hab_pop_value:
-            calculate_habitat_population_value(
-                TARGET_CV_VECTOR_PATH,
-                [(ls_population_raster_path, 'total_pop'),
-                 (poor_population_raster_path, 'poor_pop')],
-                global_dem_raster_path, FINAL_HAB_FIELDS,
-                HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
-        if not args.skip_hab_value:
-            local_lulc_raster_path = os.path.join(
-                ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
-            LOGGER.info('starting hab value calc')
-            calculate_habitat_value(
-                TARGET_CV_VECTOR_PATH, local_lulc_raster_path,
-                FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
-    except Exception:
-        LOGGER.exception('error in main')
+        with open(LANDCOVER_RASTER_DATA_FILE, 'r') as landcover_raster_file:
+            landcover_url_list = landcover_raster_file.read().splitlines()
+        for landcover_url in landcover_url_list:
+            local_data_path_map = download_data(lulc=landcover_url)
+            if not args.skip_main:
+                landcover_basename = os.path.splitext(
+                    os.path.basename(landcover_url))[0]
+                target_vector_cv_path = os.path.join(
+                    WORKSPACE_DIR, '%s.gpkg' % landcover_basename)
+                calculate_degree_cell_cv(
+                    local_data_path_map, target_vector_cv_path)
+            LOGGER.info('calculating population back projection')
+            ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
+            poor_population_raster_path = os.path.join(
+                ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
+            global_dem_raster_path = os.path.join(
+                ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
+            LOGGER.info('starting cv vector risk')
+            if not args.skip_cv_vector_risk:
+                add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+                LOGGER.debug('finishing cv vector risk')
+            if not args.skip_hab_pop_value:
+                calculate_habitat_population_value(
+                    TARGET_CV_VECTOR_PATH,
+                    [(ls_population_raster_path, 'total_pop'),
+                     (poor_population_raster_path, 'poor_pop')],
+                    global_dem_raster_path, FINAL_HAB_FIELDS,
+                    HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+            if not args.skip_hab_value:
+                local_lulc_raster_path = os.path.join(
+                    ECOSHARD_DIR, os.path.basename(LULC_RASTER_URL))
+                LOGGER.info('starting hab value calc')
+                calculate_habitat_value(
+                    TARGET_CV_VECTOR_PATH, local_lulc_raster_path,
+                    FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+        except Exception:
+            LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
