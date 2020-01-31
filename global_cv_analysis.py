@@ -56,6 +56,9 @@ M_PER_DEGREE = 111300.0
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
 
+EMPTY_RASTER_URL = (
+    ECOSHARD_BUCKET_URL + 'empty_md5_f8f71e20668060bda7567ca33149a45c.tif')
+
 GLOBAL_POLYGON_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_global_polygon_simplified_geometries_'
@@ -2744,6 +2747,11 @@ if __name__ == '__main__':
         '--skip_cv_vector_risk', action='store_true')
     parser.add_argument(
         '--skip_hab_value', action='store_true')
+
+    parser.add_argument(
+        '--dasgupta_mode', action='store_true',
+        help='Ignore offshore mangrove and saltmarsh')
+
     args = parser.parse_args()
 
     for dir_path in [
@@ -2752,6 +2760,10 @@ if __name__ == '__main__':
             os.makedirs(dir_path)
         except OSError:
             pass
+
+    if args.dasgupta_mode:
+        GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
+        GLOBAL_SEAGRASS_RASTER_URL = EMPTY_RASTER_URL
 
     try:
         with open(LANDCOVER_RASTER_DATA_FILE, 'r') as landcover_raster_file:
