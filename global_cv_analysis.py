@@ -47,7 +47,6 @@ LANDCOVER_RASTER_DATA_FILE = 'GLOBAL_CV_DATA_INPUTS.txt'
 
 # [minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
-SHORE_POINT_SAMPLE_DISTANCE = 250.0
 RELIEF_SAMPLE_DISTANCE = 5000.0
 N_FETCH_RAYS = 16  # this is hardcoded because of WWIII fields
 MAX_FETCH_DISTANCE = 60000
@@ -2747,12 +2746,17 @@ if __name__ == '__main__':
         '--skip_cv_vector_risk', action='store_true')
     parser.add_argument(
         '--skip_hab_value', action='store_true')
+    parser.add_argument(
+        '--shore_point_sample_distance', type=float, default=2000.0,
+        help='Distance between shore sample points in meters.')
 
     parser.add_argument(
         '--dasgupta_mode', action='store_true',
         help='Ignore offshore mangrove and saltmarsh')
 
     args = parser.parse_args()
+
+    SHORE_POINT_SAMPLE_DISTANCE = args.shore_point_sample_distance
 
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
