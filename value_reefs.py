@@ -3,14 +3,19 @@ import argparse
 import glob
 import logging
 import os
+import math
 import sys
 
 import ecoshard
 from osgeo import gdal
+from osgeo import ogr
+from osgeo import osr
 import pygeoprocessing
+import numpy
+import shutil
 import taskgraph
 import taskgraph_downloader_pnn
-
+import tempfile
 
 ECOSHARD_BUCKET_URL = (
     r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
@@ -25,6 +30,12 @@ LS_POPULATION_RASTER_URL = (
 POVERTY_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'Poverty_Count_2017_clean_md5_0cc6e0187be07e760e66f759a0a1f7e8.tif')
+GLOBAL_DEM_RASTER_URL = (
+    ECOSHARD_BUCKET_URL +
+    'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
+
+M_PER_DEGREE = 111300.0
+
 
 # set a 1GB limit for the cache
 gdal.SetCacheMax(2**30)
@@ -39,6 +50,113 @@ LOGGER = logging.getLogger(__name__)
 
 WORKSPACE_DIR = 'value_reefs_workspace'
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
+
+
+def clean_convolve_2d(
+        signal_raster_band_path, kernel_raster_band_path, target_raster_path,
+        working_dir=None):
+    """Do 2D convolution but mask out any close to 0 values to 0."""
+    temp_workspace_dir = tempfile.mkdtemp(
+        dir=os.path.dirname(signal_raster_band_path[0]),
+        prefix='clean_convolve_2d')
+    temp_target_raster = os.path.join(temp_workspace_dir, 'result.tif')
+    pygeoprocessing.convolve_2d(
+        signal_raster_band_path, kernel_raster_band_path,
+        temp_target_raster, working_dir=working_dir)
+    nodata = pygeoprocessing.get_raster_info(temp_target_raster)['nodata'][0]
+    pygeoprocessing.raster_calculator(
+        [(temp_target_raster, 1), (1e-6, 'raw')], set_almost_zero_to_zero,
+        target_raster_path, gdal.GDT_Float32, nodata)
+    try:
+        shutil.rmtree(temp_workspace_dir)
+    except OSError:
+        LOGGER.exception('unable to remove %s' % temp_workspace_dir)
+
+
+def calculate_utm_srs(lng, lat):
+    """Calculate UTM SRS from the lng/lat point given.
+
+    Parameters:
+        lng (float): longitude point.
+        lat (float): latitude point.
+
+    Returns:
+        osr.SpatialReference in the UTM zone that contains the point (lng, lat)
+
+    """
+    utm_code = (math.floor((lng+180)/6) % 60) + 1
+    lat_code = 6 if lat > 0 else 7
+    epsg_code = int('32%d%02d' % (lat_code, utm_code))
+    utm_srs = osr.SpatialReference()
+    utm_srs.ImportFromEPSG(epsg_code)
+    return utm_srs
+
+
+def set_almost_zero_to_zero(array, eps):
+    result = numpy.empty_like(array)
+    result[:] = numpy.where(numpy.abs(array) < eps, 0.0, array)
+    return result
+
+
+def create_averaging_kernel_raster(
+        radius_in_pixels, kernel_filepath, normalize=True):
+    """Create a flat raster kernel with a 2d radius given.
+
+    Parameters:
+        radius_in_pixels (tuple): the (x/y) distance of the averaging kernel.
+        kernel_filepath (string): The path to the file on disk where this
+            kernel should be stored.  If this file exists, it will be
+            overwritten.
+
+    Returns:
+        None
+
+    """
+    driver = gdal.GetDriverByName('GTiff')
+    LOGGER.debug(radius_in_pixels)
+    kernel_raster = driver.Create(
+        kernel_filepath, int(2*radius_in_pixels[0]),
+        int(2*radius_in_pixels[1]), 1, gdal.GDT_Float32)
+
+    # Make some kind of geotransform, it doesn't matter what but
+    # will make GIS libraries behave better if it's all defined
+    kernel_raster.SetGeoTransform([1, 0.1, 0, 1, 0, -0.1])
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    kernel_raster.SetProjection(srs.ExportToWkt())
+
+    kernel_band = kernel_raster.GetRasterBand(1)
+    kernel_band.SetNoDataValue(-9999)
+
+    n_cols = kernel_raster.RasterXSize
+    n_rows = kernel_raster.RasterYSize
+    iv, jv = numpy.meshgrid(range(n_rows), range(n_cols), indexing='ij')
+
+    cx = n_cols / 2.0
+    cy = n_rows / 2.0
+
+    kernel_array = numpy.where(
+        ((cx-jv)**2 + (cy-iv)**2)**0.5 <= radius_in_pixels[0], 1.0, 0.0)
+    kernel_array = numpy.where(
+        ((cx-jv) / radius_in_pixels[0])**2 +
+        ((cy-iv) / radius_in_pixels[1])**2 <= 1.0, 1.0, 0.0)
+    LOGGER.debug(kernel_array)
+
+    # normalize
+    if normalize:
+        kernel_array /= numpy.sum(kernel_array)
+    kernel_band.WriteArray(kernel_array)
+    kernel_band = None
+    kernel_raster = None
+
+
+def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
+    """Set pop to 0 if > height."""
+    result = numpy.zeros(shape=pop_array.shape)
+    valid_mask = (
+        (dem_array < mask_height) & ~numpy.isclose(pop_array, pop_nodata))
+    result[valid_mask] = pop_array[valid_mask]
+    return result
 
 
 def align_raster_list(raster_path_list, target_directory):
@@ -253,6 +371,7 @@ def calculate_habitat_population_value(
     task_graph.close()
     del task_graph
 
+
 def calculate_habitat_value(
         shore_sample_point_vector, template_raster_path,
         habitat_fieldname_list, habitat_vector_path_map, results_dir):
@@ -392,6 +511,90 @@ def calculate_habitat_value(
         ecoshard.build_overviews(habitat_value_raster_path)
 
 
+def intersect_and_mask_raster_op(
+        array_a, array_b, mask_array, nodata_a, nodata_b):
+    result = numpy.empty_like(array_a)
+    result[:] = nodata_a
+    valid_mask = (
+        ~numpy.isclose(array_a, nodata_a) &
+        ~numpy.isclose(array_b, nodata_b) &
+        (mask_array == 1))
+    result[valid_mask] = array_a[valid_mask]
+    return result
+
+
+def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
+    """Only return values from a where a and b are defined."""
+    result = numpy.empty_like(array_a)
+    result[:] = nodata_a
+    valid_mask = (
+        ~numpy.isclose(array_a, nodata_a) &
+        ~numpy.isclose(array_b, nodata_b))
+    result[valid_mask] = array_a[valid_mask]
+    return result
+
+
+def make_buffered_point_raster_mask(
+        shore_sample_point_vector_path, template_raster_path, workspace_dir,
+        habitat_id,
+        protective_distance, target_buffer_raster_path):
+    gpkg_driver = ogr.GetDriverByName('GPKG')
+    buffer_habitat_path = os.path.join(
+        workspace_dir, '%s_buffer.gpkg' % habitat_id)
+    buffer_habitat_vector = gpkg_driver.CreateDataSource(
+        buffer_habitat_path)
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    buffer_habitat_layer = (
+        buffer_habitat_vector.CreateLayer(
+            habitat_id, wgs84_srs, ogr.wkbPolygon))
+    buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
+
+    shore_sample_point_vector = gdal.OpenEx(
+        shore_sample_point_vector_path, gdal.OF_VECTOR)
+    shore_sample_point_layer = shore_sample_point_vector.GetLayer()
+    buffer_habitat_layer.StartTransaction()
+    for point_index, point_feature in enumerate(shore_sample_point_layer):
+        if point_index % 1000 == 0:
+            LOGGER.debug(
+                'point buffering is %.2f%% complete',
+                point_index / shore_sample_point_layer.GetFeatureCount() *
+                100.0)
+        # for each point, convert to local UTM to buffer out a given
+        # distance then back to wgs84
+        point_geom = point_feature.GetGeometryRef()
+        utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
+        wgs84_to_utm_transform = osr.CoordinateTransformation(
+            wgs84_srs, utm_srs)
+        utm_to_wgs84_transform = osr.CoordinateTransformation(
+            utm_srs, wgs84_srs)
+        point_geom.Transform(wgs84_to_utm_transform)
+        buffer_poly_geom = point_geom.Buffer(protective_distance)
+        buffer_poly_geom.Transform(utm_to_wgs84_transform)
+
+        buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
+        buffer_point_feature.SetGeometry(buffer_poly_geom)
+        buffer_habitat_layer.CreateFeature(buffer_point_feature)
+        buffer_point_feature = None
+        point_feature = None
+        buffer_poly_geom = None
+        point_geom = None
+
+    # at this point every shore point has been buffered to the effective
+    # habitat distance and the habitat service has been saved with it
+    buffer_habitat_layer.CommitTransaction()
+    buffer_habitat_layer = None
+    buffer_habitat_vector = None
+    pygeoprocessing.new_raster_from_base(
+        template_raster_path, target_buffer_raster_path,
+        gdal.GDT_Float32, [0],
+        raster_driver_creation_tuple=(
+            'GTIFF', (
+                'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
+                'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
+    pygeoprocessing.rasterize(
+        buffer_habitat_path, target_buffer_raster_path, burn_values=[1])
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Calcualte risk from reefs')
@@ -413,13 +616,14 @@ if __name__ == '__main__':
     tdd_downloader.download_ecoshard(
         GLOBAL_REEFS_RASTER_URL, 'reefs')
     tdd_downloader.download_ecoshard(
-        LS_POPULATION_RASTER_URL, 'ls_population')
+        LS_POPULATION_RASTER_URL, 'total_pop')
     tdd_downloader.download_ecoshard(
-        POVERTY_POPULATION_RASTER_URL, 'poor_population')
-
+        POVERTY_POPULATION_RASTER_URL, 'poor_pop')
+    tdd_downloader.download_ecoshard(
+        GLOBAL_DEM_RASTER_URL, 'global_dem')
     for cv_risk_vector_pattern in args.cv_risk_vector_pattern:
-        for cv_path in glob.glob(cv_risk_vector_pattern):
-            basename = os.path.basename(os.path.splitext(cv_path)[0])
+        for cv_vector_path in glob.glob(cv_risk_vector_pattern):
+            basename = os.path.basename(os.path.splitext(cv_vector_path)[0])
             LOGGER.debug(basename)
 
             reefs_value_raster_path = os.path.join(
@@ -428,6 +632,16 @@ if __name__ == '__main__':
                 WORKSPACE_DIR, "reefs_poor_pop_coverage_%s.tif" % basename)
             reefs_total_pop_coverage_raster_path = os.path.join(
                 WORKSPACE_DIR, "reefs_total_pop_coverage_%s.tif" % basename)
+
+            calculate_habitat_population_value(
+                cv_vector_path, tdd_downloader.get_path('global_dem'),
+                [(tdd_downloader.get_path('total_pop'), 'total_pop',
+                  reefs_poor_pop_coverage_raster_path),
+                 (tdd_downloader.get_path('poor_pop'), 'poor_pop',
+                  reefs_total_pop_coverage_raster_path)])
+            calculate_habitat_value(
+                cv_vector_path, tdd_downloader.get_path('global_dem'),
+                reefs_value_raster_path)
 
     task_graph.join()
     task_graph.close()
