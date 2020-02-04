@@ -303,7 +303,7 @@ def calculate_reef_population_value(
 
 def calculate_reef_value(
         shore_sample_point_vector, template_raster_path,
-        reef_habitat_raster_path, working_dir):
+        reef_habitat_raster_path, working_dir, target_reef_value_raster_path):
     """Calculate habitat value.
 
     Will create rasters in the `working_dir` directory named from the
@@ -325,6 +325,8 @@ def calculate_reef_value(
              protective distance (float)).
         working_dir (str): path to directory containing habitat back projection
             results
+        target_reef_value_raster_path (str): path to raster value raster for
+            that habitat.
 
     Returns:
         None.
@@ -408,9 +410,6 @@ def calculate_reef_value(
             'ATTRIBUTE=%s' % reef_service_id,
             'MERGE_ALG=ADD'])
 
-    habitat_value_raster_path = os.path.join(
-        working_dir, 'reefs_all_value.tif')
-
     value_coverage_nodata = pygeoprocessing.get_raster_info(
         value_coverage_raster_path)['nodata'][0]
     hab_nodata = pygeoprocessing.get_raster_info(
@@ -424,10 +423,10 @@ def calculate_reef_value(
         [(aligned_value_hab_raster_path_list[0], 1),
          (aligned_value_hab_raster_path_list[1], 1),
          (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
-        intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
+        intersect_raster_op, target_reef_value_raster_path, gdal.GDT_Float32,
         value_coverage_nodata)
 
-    ecoshard.build_overviews(habitat_value_raster_path)
+    ecoshard.build_overviews(target_reef_value_raster_path)
 
 
 def intersect_and_mask_raster_op(
@@ -553,6 +552,9 @@ if __name__ == '__main__':
             reefs_total_pop_coverage_raster_path = os.path.join(
                 WORKSPACE_DIR, "reefs_total_pop_coverage_%s.tif" % basename)
 
+            calculate_reef_value(
+                cv_vector_path, tdd_downloader.get_path('global_dem'),
+                tdd_downloader.get_path('reefs'), WORKSPACE_DIR)
             calculate_reef_population_value(
                 cv_vector_path, tdd_downloader.get_path('global_dem'),
                 tdd_downloader.get_path('reefs'),
@@ -560,9 +562,6 @@ if __name__ == '__main__':
                   reefs_poor_pop_coverage_raster_path),
                  (tdd_downloader.get_path('poor_pop'), 'poor_pop',
                   reefs_total_pop_coverage_raster_path)], WORKSPACE_DIR)
-            calculate_reef_value(
-                cv_vector_path, tdd_downloader.get_path('global_dem'),
-                reefs_value_raster_path, WORKSPACE_DIR)
 
     task_graph.join()
     task_graph.close()
