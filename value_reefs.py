@@ -35,7 +35,7 @@ GLOBAL_DEM_RASTER_URL = (
     'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
 
 M_PER_DEGREE = 111300.0
-
+REEF_PROT_DIST = 2000.0
 
 # set a 1GB limit for the cache
 gdal.SetCacheMax(2**30)
@@ -175,92 +175,76 @@ def align_raster_list(raster_path_list, target_directory):
             interpolation algorithm.
 
     """
-    if not hasattr(align_raster_list, 'task_graph_map'):
-        align_raster_list.task_graph_map = {}
-    if target_directory not in align_raster_list.task_graph_map:
-        align_raster_list.task_graph_map[target_directory] = (
-            taskgraph.TaskGraph(target_directory, -1))
-    task_graph = align_raster_list.task_graph_map[target_directory]
+    LOGGER.debug('aligning %s', raster_path_list)
     aligned_path_list = [
         os.path.join(target_directory, os.path.basename(path))
         for path in raster_path_list]
     target_pixel_size = pygeoprocessing.get_raster_info(
         raster_path_list[0])['pixel_size']
     LOGGER.debug('about to align: %s', str(raster_path_list))
-    task_graph.add_task(
-        func=pygeoprocessing.align_and_resize_raster_stack,
-        args=(
-            raster_path_list, aligned_path_list,
-            ['near'] * len(raster_path_list), target_pixel_size,
-            'intersection'),
-        target_path_list=aligned_path_list)
+    pygeoprocessing.align_and_resize_raster_stack(
+        raster_path_list, aligned_path_list,
+        ['near'] * len(raster_path_list), target_pixel_size,
+        'intersection')
     return aligned_path_list
 
 
-def calculate_habitat_population_value(
-        shore_sample_point_vector_path, population_raster_path_id_list,
-        dem_raster_path, habitat_fieldname_list, habitat_vector_path_map,
-        results_dir):
-    """Calculate population within protective range of habitat.
+def calculate_reef_population_value(
+        shore_sample_point_vector_path, dem_raster_path,
+        reef_habitat_raster_path,
+        population_raster_path_id_target_list, temp_workspace_dir):
+    """Calculate population within protective range of reefs.
 
     Parameters:
-        shore_sample_point_vector_path (str): path to a point shapefile that is only
-            used for referencing the points of interest on the coastline.
-        population_raster_path_id_list (list): list of (raster_path, field_id)
+        shore_sample_point_vector_path (str): path to a point shapefile that is
+            used for referencing the points of interest on the coastline where.
+        dem_raster_path (str): path to a dem used to mask population by height
+            in wgs84 lat/lng projection.
+        reef_habitat_raster_path (str): path to a mask raster where reef
+            habitat exists.
+        population_raster_path_id_list (list): list of
+            (raster_path, field_id, target_path)
             tuples. The values in the raster paths will be masked where it
             overlaps with < 10m dem height and convolved within 2km. That
             result is in turn spread onto the habitat coverage at a distance
-            of the protective distance of that habitat. These rasters are in
+            of the protective distance of reefs. These rasters are in
             wgs84 lat/lng projection.
-        dem_raster_path (str): path to a dem used to mask population by height
-            in wgs84 lat/lng projection.
-        habitat_fieldname_list (list): list of habitat ids to analyse.
-        habitat_vector_path_map (dict): maps fieldnames from
-            `habitat_fieldname_list` to 3-tuples of
-            (path to hab raster (str), risk val (float),
-             protective distance (float)).
-        results_dir (str): path to directory containing habitat back projection
-            results
 
     Returns:
         None
 
     """
-    temp_workspace_dir = os.path.join(
-        results_dir, 'calc_pop_coverage_churn')
-    taskgraph_working_dir = os.path.join(temp_workspace_dir, 'taskgraph')
-    for path in [results_dir, taskgraph_working_dir, temp_workspace_dir]:
-        try:
-            os.makedirs(results_dir)
-        except OSError:
-            pass
-    task_graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
     aligned_pop_raster_list = align_raster_list(
-        [x[0] for x in population_raster_path_id_list] + [dem_raster_path],
-        temp_workspace_dir)
+        [x[0] for x in population_raster_path_id_target_list] +
+        [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir)
 
-    for pop_index, (_, pop_id) in enumerate(population_raster_path_id_list):
+    raster_info = pygeoprocessing.get_raster_info(
+        population_raster_path_id_target_list[0][0])
+    target_pixel_size = raster_info['pixel_size']
+
+    n_pixels_in_prot_dist = max(1, int(REEF_PROT_DIST / (
+        M_PER_DEGREE * abs(target_pixel_size[0]))))
+    kernel_radius = [n_pixels_in_prot_dist, n_pixels_in_prot_dist]
+    kernel_filepath = os.path.join(
+        temp_workspace_dir, 'reef_kernel.tif')
+    create_averaging_kernel_raster(
+        kernel_radius, kernel_filepath, normalize=False)
+
+    for pop_index, (_, pop_id, target_path) in enumerate(
+            population_raster_path_id_target_list):
         # mask to < 10m
         pop_height_masked_path = os.path.join(
             temp_workspace_dir, '%s_masked_by_10m.tif' % pop_id)
-        raster_info = pygeoprocessing.get_raster_info(
-            aligned_pop_raster_list[pop_index])
 
-        pop_height_mask_task = task_graph.add_task(
-            func=pygeoprocessing.raster_calculator,
-            args=(
-                [(aligned_pop_raster_list[pop_index], 1),
-                 (aligned_pop_raster_list[-1], 1),
-                 (10.0, 'raw'),  # mask to 10 meters
-                 (raster_info['nodata'][0], 'raw')],  # the -1 index is the dem
-                mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
-                raster_info['nodata'][0]),
-            target_path_list=[pop_height_masked_path],
-            task_name='pop height mask 10m %s' % pop_id)
-        pop_height_mask_task.join()
+        pygeoprocessing.raster_calculator(
+            [(aligned_pop_raster_list[pop_index], 1),
+             (aligned_pop_raster_list[-1], 1),
+             (10.0, 'raw'),  # mask to 10 meters
+             (raster_info['nodata'][0], 'raw')],  # the -1 index is the dem
+            mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
+            raster_info['nodata'][0])
 
-        target_pixel_size = raster_info['pixel_size']
         # spread the < 10m population out 2km
         n_pixels_in_2km = int(2000.0 / (
             M_PER_DEGREE * abs(target_pixel_size[0])))
@@ -271,113 +255,58 @@ def calculate_habitat_population_value(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
         pop_sum_within_2km_path = os.path.join(
             temp_workspace_dir, '%s_pop_sum_within_2km.tif' % pop_id)
-        pop_sum_task = task_graph.add_task(
-            func=pygeoprocessing.convolve_2d,
-            args=(
-                (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
-                pop_sum_within_2km_path),
-            kwargs={'working_dir': temp_workspace_dir},
-            target_path_list=[pop_sum_within_2km_path],
-            task_name='pop sum w/in 2km %s' % pop_id)
+        pygeoprocessing.convolve_2d(
+            (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
+            pop_sum_within_2km_path)
 
-        # spread the 2km pop out by the hab distance
-        for habitat_id in habitat_fieldname_list:
-            hab_raster_path, _, prot_distance = (
-                habitat_vector_path_map[habitat_id])
-            # make a kernel that goes out the distance of the protective
-            # distance of habitat
-            n_pixels_in_prot_dist = max(1, int(prot_distance / (
-                M_PER_DEGREE * abs(target_pixel_size[0]))))
-            kernel_radius = [n_pixels_in_prot_dist, n_pixels_in_prot_dist]
-            kernel_filepath = os.path.join(
-                temp_workspace_dir, '%s_kernel.tif' % habitat_id)
-            create_averaging_kernel_raster(
-                kernel_radius, kernel_filepath, normalize=False)
-            population_hab_spread_raster_path = os.path.join(
-                temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
-            spread_to_hab_task = task_graph.add_task(
-                func=clean_convolve_2d,
-                args=(
-                    (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
-                    population_hab_spread_raster_path),
-                kwargs={'working_dir': temp_workspace_dir},
-                target_path_list=[population_hab_spread_raster_path],
-                dependent_task_list=[pop_sum_task],
-                task_name='spread pop to hab %s %s ' % (pop_id, habitat_id))
+        align_reef_habitat_raster_path = aligned_pop_raster_list[-2]
+        population_hab_spread_raster_path = os.path.join(
+            temp_workspace_dir, 'reef_%s_spread.tif' % (pop_id))
+        clean_convolve_2d(
+            (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
+            population_hab_spread_raster_path)
+        hab_raster_info = pygeoprocessing.get_raster_info(
+            align_reef_habitat_raster_path)
 
-            hab_raster_info = pygeoprocessing.get_raster_info(hab_raster_path)
+        # warp pop result to overlay
+        clipped_pop_hab_spread_raster_path = os.path.join(
+            temp_workspace_dir, 'reef_%s_spread_clipped.tif' % pop_id)
+        pygeoprocessing.warp_raster(
+            population_hab_spread_raster_path,
+            hab_raster_info['pixel_size'],
+            clipped_pop_hab_spread_raster_path,
+            'near')
 
-            # warp pop result to overlay
-            clipped_pop_hab_spread_raster_path = os.path.join(
-                temp_workspace_dir, '%s_%s_spread_clipped.tif' % (
-                    habitat_id, pop_id))
-            task_graph.add_task(
-                func=pygeoprocessing.warp_raster,
-                args=(
-                    population_hab_spread_raster_path,
-                    hab_raster_info['pixel_size'],
-                    clipped_pop_hab_spread_raster_path,
-                    'near'),
-                kwargs={
-                    'target_bb': hab_raster_info['bounding_box'],
-                    'working_dir': temp_workspace_dir},
-                target_path_list=[clipped_pop_hab_spread_raster_path],
-                dependent_task_list=[spread_to_hab_task],
-                task_name='spread to hab %s %s' % (pop_id, habitat_id))
+        hab_spread_nodata = pygeoprocessing.get_raster_info(
+            clipped_pop_hab_spread_raster_path)['nodata'][0]
+        hab_nodata = hab_raster_info['nodata'][0]
 
-            # mask the convolution by the habitat mask
-            task_graph.join()
-            hab_spread_nodata = pygeoprocessing.get_raster_info(
-                clipped_pop_hab_spread_raster_path)['nodata'][0]
-            hab_nodata = pygeoprocessing.get_raster_info(
-                hab_raster_path)['nodata'][0]
-            habitat_value_raster_path = os.path.join(
-                results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
+        buffered_point_raster_mask_path = os.path.join(
+            temp_workspace_dir, 'reef_buffer_mask.tif')
+        make_buffered_point_raster_mask(
+            shore_sample_point_vector_path,
+            clipped_pop_hab_spread_raster_path,
+            temp_workspace_dir, 'reefs_all',
+            REEF_PROT_DIST, buffered_point_raster_mask_path)
 
-            buffered_point_raster_mask_path = os.path.join(
-                temp_workspace_dir, '%s_buffer_mask.tif' % habitat_id)
-            buffered_raster_task = task_graph.add_task(
-                func=make_buffered_point_raster_mask,
-                args=(
-                    shore_sample_point_vector_path,
-                    clipped_pop_hab_spread_raster_path,
-                    temp_workspace_dir, habitat_id,
-                    prot_distance, buffered_point_raster_mask_path),
-                target_path_list=[buffered_point_raster_mask_path],
-                task_name='buffered point for %s' % habitat_id)
+        pygeoprocessing.raster_calculator(
+            [(clipped_pop_hab_spread_raster_path, 1),
+             (align_reef_habitat_raster_path, 1),
+             (buffered_point_raster_mask_path, 1),
+             (hab_spread_nodata, 'raw'),
+             (hab_nodata, 'raw')],
+            intersect_and_mask_raster_op, target_path,
+            gdal.GDT_Float32, hab_spread_nodata),
 
-            hab_value_task = task_graph.add_task(
-                func=pygeoprocessing.raster_calculator,
-                args=(
-                    [(clipped_pop_hab_spread_raster_path, 1),
-                     (hab_raster_path, 1),
-                     (buffered_point_raster_mask_path, 1),
-                     (hab_spread_nodata, 'raw'),
-                     (hab_nodata, 'raw')],
-                    intersect_and_mask_raster_op, habitat_value_raster_path,
-                    gdal.GDT_Float32, hab_spread_nodata),
-                dependent_task_list=[buffered_raster_task],
-                target_path_list=[habitat_value_raster_path],
-                task_name='mask result %s %s' % (pop_id, habitat_id))
-
-            task_graph.add_task(
-                func=ecoshard.build_overviews,
-                args=(habitat_value_raster_path,),
-                target_path_list=[habitat_value_raster_path],
-                dependent_task_list=[hab_value_task],
-                task_name='build overviews for %s' % habitat_value_raster_path)
-
-    task_graph.join()
-    task_graph.close()
-    del task_graph
+        ecoshard.build_overviews(target_path)
 
 
-def calculate_habitat_value(
+def calculate_reef_value(
         shore_sample_point_vector, template_raster_path,
-        habitat_fieldname_list, habitat_vector_path_map, results_dir):
+        reef_habitat_raster_path, working_dir):
     """Calculate habitat value.
 
-    Will create rasters in the `results_dir` directory named from the
+    Will create rasters in the `working_dir` directory named from the
     `habitat_fieldname_list` values containing relative importance of
     global habitat. The higher the value of a pixel the more important that
     pixel of habitat is for protection of the coastline.
@@ -394,15 +323,15 @@ def calculate_habitat_value(
             `habitat_fieldname_list` to 3-tuples of
             (path to hab vector (str), risk val (float),
              protective distance (float)).
-        results_dir (str): path to directory containing habitat back projection
+        working_dir (str): path to directory containing habitat back projection
             results
 
     Returns:
         None.
 
     """
-    temp_workspace_dir = os.path.join(results_dir, 'hab_value_churn')
-    for dir_path in [results_dir, temp_workspace_dir]:
+    temp_workspace_dir = os.path.join(working_dir, 'hab_value_churn')
+    for dir_path in [working_dir, temp_workspace_dir]:
         try:
             os.makedirs(dir_path)
         except OSError:
@@ -413,102 +342,92 @@ def calculate_habitat_value(
         shore_sample_point_vector, gdal.OF_VECTOR)
     shore_sample_point_layer = shore_sample_point_vector.GetLayer()
 
-    for habitat_id in habitat_fieldname_list:
-        habitat_service_id = 'Rt_habservice_%s' % habitat_id
-        hab_raster_path, _, protective_distance = (
-            habitat_vector_path_map[habitat_id])
+    reef_service_id = 'Rt_habservice_reefs_all'
 
-        buffer_habitat_path = os.path.join(
-            temp_workspace_dir, '%s_buffer.gpkg' % habitat_id)
-        buffer_habitat_vector = gpkg_driver.CreateDataSource(
-            buffer_habitat_path)
-        wgs84_srs = osr.SpatialReference()
-        wgs84_srs.ImportFromEPSG(4326)
-        buffer_habitat_layer = (
-            buffer_habitat_vector.CreateLayer(
-                habitat_service_id, wgs84_srs, ogr.wkbPolygon))
-        buffer_habitat_layer.CreateField(ogr.FieldDefn(
-            habitat_service_id, ogr.OFTReal))
-        buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
+    buffer_habitat_path = os.path.join(
+        temp_workspace_dir, 'reefs_all_buffer.gpkg')
+    buffer_habitat_vector = gpkg_driver.CreateDataSource(
+        buffer_habitat_path)
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    buffer_habitat_layer = (
+        buffer_habitat_vector.CreateLayer(
+            reef_service_id, wgs84_srs, ogr.wkbPolygon))
+    buffer_habitat_layer.CreateField(ogr.FieldDefn(
+        reef_service_id, ogr.OFTReal))
+    buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
 
-        shore_sample_point_layer.ResetReading()
-        buffer_habitat_layer.StartTransaction()
-        for point_index, point_feature in enumerate(shore_sample_point_layer):
-            if point_index % 1000 == 0:
-                LOGGER.debug(
-                    'point buffering is %.2f%% complete',
-                    point_index / shore_sample_point_layer.GetFeatureCount() *
-                    100.0)
-            # for each point, convert to local UTM to buffer out a given
-            # distance then back to wgs84
-            point_geom = point_feature.GetGeometryRef()
-            utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
-            wgs84_to_utm_transform = osr.CoordinateTransformation(
-                wgs84_srs, utm_srs)
-            utm_to_wgs84_transform = osr.CoordinateTransformation(
-                utm_srs, wgs84_srs)
-            point_geom.Transform(wgs84_to_utm_transform)
-            buffer_poly_geom = point_geom.Buffer(protective_distance)
-            buffer_poly_geom.Transform(utm_to_wgs84_transform)
+    shore_sample_point_layer.ResetReading()
+    buffer_habitat_layer.StartTransaction()
+    for point_index, point_feature in enumerate(shore_sample_point_layer):
+        if point_index % 1000 == 0:
+            LOGGER.debug(
+                'point buffering is %.2f%% complete',
+                point_index / shore_sample_point_layer.GetFeatureCount() *
+                100.0)
+        # for each point, convert to local UTM to buffer out a given
+        # distance then back to wgs84
+        point_geom = point_feature.GetGeometryRef()
+        utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
+        wgs84_to_utm_transform = osr.CoordinateTransformation(
+            wgs84_srs, utm_srs)
+        utm_to_wgs84_transform = osr.CoordinateTransformation(
+            utm_srs, wgs84_srs)
+        point_geom.Transform(wgs84_to_utm_transform)
+        buffer_poly_geom = point_geom.Buffer(REEF_PROT_DIST)
+        buffer_poly_geom.Transform(utm_to_wgs84_transform)
 
-            buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
-            buffer_point_feature.SetGeometry(buffer_poly_geom)
+        buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
+        buffer_point_feature.SetGeometry(buffer_poly_geom)
+        buffer_point_feature.SetField(
+            reef_service_id,
+            point_feature.GetField('Rt_habservice_reefs_all'))
+        buffer_habitat_layer.CreateFeature(buffer_point_feature)
+        buffer_point_feature = None
+        point_feature = None
+        buffer_poly_geom = None
+        point_geom = None
 
-            # reefs are special
-            if habitat_id in REEF_FIELDS:
-                buffer_point_feature.SetField(
-                    habitat_service_id,
-                    point_feature.GetField('Rt_habservice_reefs_all'))
-            else:
-                buffer_point_feature.SetField(
-                    habitat_service_id,
-                    point_feature.GetField(habitat_service_id))
-            buffer_habitat_layer.CreateFeature(buffer_point_feature)
-            buffer_point_feature = None
-            point_feature = None
-            buffer_poly_geom = None
-            point_geom = None
+    # at this point every shore point has been buffered to the effective
+    # habitat distance and the habitat service has been saved with it
+    buffer_habitat_layer.CommitTransaction()
+    buffer_habitat_layer = None
+    buffer_habitat_vector = None
+    value_coverage_raster_path = os.path.join(
+        temp_workspace_dir, 'reefs_all_value_cover.tif')
+    pygeoprocessing.new_raster_from_base(
+        template_raster_path, value_coverage_raster_path,
+        gdal.GDT_Float32, [0],
+        raster_driver_creation_tuple=(
+            'GTIFF', (
+                'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
+                'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
+    pygeoprocessing.rasterize(
+        buffer_habitat_path, value_coverage_raster_path,
+        option_list=[
+            'ATTRIBUTE=%s' % reef_service_id,
+            'MERGE_ALG=ADD'])
 
-        # at this point every shore point has been buffered to the effective
-        # habitat distance and the habitat service has been saved with it
-        buffer_habitat_layer.CommitTransaction()
-        buffer_habitat_layer = None
-        buffer_habitat_vector = None
-        value_coverage_raster_path = os.path.join(
-            temp_workspace_dir, '%s_value_cover.tif' % habitat_id)
-        pygeoprocessing.new_raster_from_base(
-            template_raster_path, value_coverage_raster_path,
-            gdal.GDT_Float32, [0],
-            raster_driver_creation_tuple=(
-                'GTIFF', (
-                    'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
-                    'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
-        pygeoprocessing.rasterize(
-            buffer_habitat_path, value_coverage_raster_path,
-            option_list=[
-                'ATTRIBUTE=%s' % habitat_service_id,
-                'MERGE_ALG=ADD'])
+    habitat_value_raster_path = os.path.join(
+        working_dir, 'reefs_all_value.tif')
 
-        habitat_value_raster_path = os.path.join(
-            results_dir, '%s_value.tif' % habitat_id)
+    value_coverage_nodata = pygeoprocessing.get_raster_info(
+        value_coverage_raster_path)['nodata'][0]
+    hab_nodata = pygeoprocessing.get_raster_info(
+        reef_habitat_raster_path)['nodata'][0]
 
-        value_coverage_nodata = pygeoprocessing.get_raster_info(
-            value_coverage_raster_path)['nodata'][0]
-        hab_nodata = pygeoprocessing.get_raster_info(
-            hab_raster_path)['nodata'][0]
+    aligned_value_hab_raster_path_list = align_raster_list(
+        [value_coverage_raster_path, reef_habitat_raster_path],
+        temp_workspace_dir)
 
-        aligned_value_hab_raster_path_list = align_raster_list(
-            [value_coverage_raster_path, hab_raster_path],
-            temp_workspace_dir)
+    pygeoprocessing.raster_calculator(
+        [(aligned_value_hab_raster_path_list[0], 1),
+         (aligned_value_hab_raster_path_list[1], 1),
+         (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
+        intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
+        value_coverage_nodata)
 
-        pygeoprocessing.raster_calculator(
-            [(aligned_value_hab_raster_path_list[0], 1),
-             (aligned_value_hab_raster_path_list[1], 1),
-             (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
-            intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
-            value_coverage_nodata)
-
-        ecoshard.build_overviews(habitat_value_raster_path)
+    ecoshard.build_overviews(habitat_value_raster_path)
 
 
 def intersect_and_mask_raster_op(
@@ -616,7 +535,8 @@ if __name__ == '__main__':
     tdd_downloader.download_ecoshard(
         GLOBAL_REEFS_RASTER_URL, 'reefs')
     tdd_downloader.download_ecoshard(
-        LS_POPULATION_RASTER_URL, 'total_pop')
+        LS_POPULATION_RASTER_URL, 'total_pop', decompress='unzip',
+        local_path='lspop2017')
     tdd_downloader.download_ecoshard(
         POVERTY_POPULATION_RASTER_URL, 'poor_pop')
     tdd_downloader.download_ecoshard(
@@ -633,15 +553,16 @@ if __name__ == '__main__':
             reefs_total_pop_coverage_raster_path = os.path.join(
                 WORKSPACE_DIR, "reefs_total_pop_coverage_%s.tif" % basename)
 
-            calculate_habitat_population_value(
+            calculate_reef_population_value(
                 cv_vector_path, tdd_downloader.get_path('global_dem'),
+                tdd_downloader.get_path('reefs'),
                 [(tdd_downloader.get_path('total_pop'), 'total_pop',
                   reefs_poor_pop_coverage_raster_path),
                  (tdd_downloader.get_path('poor_pop'), 'poor_pop',
-                  reefs_total_pop_coverage_raster_path)])
-            calculate_habitat_value(
+                  reefs_total_pop_coverage_raster_path)], WORKSPACE_DIR)
+            calculate_reef_value(
                 cv_vector_path, tdd_downloader.get_path('global_dem'),
-                reefs_value_raster_path)
+                reefs_value_raster_path, WORKSPACE_DIR)
 
     task_graph.join()
     task_graph.close()
