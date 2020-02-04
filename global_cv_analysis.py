@@ -2774,11 +2774,11 @@ if __name__ == '__main__':
             landcover_url_list = landcover_raster_file.read().splitlines()
         for landcover_url in landcover_url_list:
             local_data_path_map = download_data(lulc=landcover_url)
+            landcover_basename = os.path.splitext(
+                os.path.basename(landcover_url))[0]
+            target_cv_vector_path = os.path.join(
+                WORKSPACE_DIR, '%s.gpkg' % landcover_basename)
             if not args.skip_main:
-                landcover_basename = os.path.splitext(
-                    os.path.basename(landcover_url))[0]
-                target_cv_vector_path = os.path.join(
-                    WORKSPACE_DIR, '%s.gpkg' % landcover_basename)
                 calculate_degree_cell_cv(
                     local_data_path_map, target_cv_vector_path)
             LOGGER.info('calculating population back projection')
@@ -2789,11 +2789,11 @@ if __name__ == '__main__':
                 ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
             LOGGER.info('starting cv vector risk')
             if not args.skip_cv_vector_risk:
-                add_cv_vector_risk(TARGET_CV_VECTOR_PATH)
+                add_cv_vector_risk(target_cv_vector_path)
                 LOGGER.debug('finishing cv vector risk')
             if not args.skip_hab_pop_value:
                 calculate_habitat_population_value(
-                    TARGET_CV_VECTOR_PATH,
+                    target_cv_vector_path,
                     [(ls_population_raster_path, 'total_pop'),
                      (poor_population_raster_path, 'poor_pop')],
                     global_dem_raster_path, FINAL_HAB_FIELDS,
@@ -2803,7 +2803,7 @@ if __name__ == '__main__':
                     ECOSHARD_DIR, os.path.basename(landcover_url))
                 LOGGER.info('starting hab value calc')
                 calculate_habitat_value(
-                    TARGET_CV_VECTOR_PATH, local_lulc_raster_path,
+                    target_cv_vector_path, local_lulc_raster_path,
                     FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')

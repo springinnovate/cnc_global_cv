@@ -554,7 +554,8 @@ if __name__ == '__main__':
 
             calculate_reef_value(
                 cv_vector_path, tdd_downloader.get_path('global_dem'),
-                tdd_downloader.get_path('reefs'), WORKSPACE_DIR)
+                tdd_downloader.get_path('reefs'), WORKSPACE_DIR,
+                reefs_value_raster_path)
             calculate_reef_population_value(
                 cv_vector_path, tdd_downloader.get_path('global_dem'),
                 tdd_downloader.get_path('reefs'),
