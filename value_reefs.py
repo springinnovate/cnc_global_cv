@@ -159,7 +159,9 @@ def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
     return result
 
 
-def align_raster_list(raster_path_list, target_directory, target_sr_wkt=None):
+def align_raster_list(
+        raster_path_list, target_directory, target_sr_wkt=None,
+        align_index=0):
     """Aligns all the raster paths.
 
     Rasters are aligned using the pixel size of the first raster and use
@@ -169,6 +171,9 @@ def align_raster_list(raster_path_list, target_directory, target_sr_wkt=None):
         raster_path_list (list): list of str paths to rasters.
         target_directory (str): path to a directory to hold the aligned
             rasters.
+        target_sr_wkt (str): if not None this is the projection.
+        align_index (int): this index is used to indicate which raster should
+            be used for aligned pixel size.
 
     Returns:
         list of raster paths that are aligned with intersection and near
@@ -180,7 +185,7 @@ def align_raster_list(raster_path_list, target_directory, target_sr_wkt=None):
         os.path.join(target_directory, os.path.basename(path))
         for path in raster_path_list]
     target_pixel_size = pygeoprocessing.get_raster_info(
-        raster_path_list[0])['pixel_size']
+        raster_path_list[align_index])['pixel_size']
     LOGGER.debug('about to align: %s', str(raster_path_list))
     pygeoprocessing.align_and_resize_raster_stack(
         raster_path_list, aligned_path_list,
@@ -219,7 +224,8 @@ def calculate_reef_population_value(
     aligned_pop_raster_list = align_raster_list(
         [x[0] for x in population_raster_path_id_target_list] +
         [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir,
-        wgs84_srs.ExportToWkt())
+        wgs84_srs.ExportToWkt(),
+        index=len(population_raster_path_id_target_list))
 
     raster_info = pygeoprocessing.get_raster_info(
         aligned_pop_raster_list[0])
