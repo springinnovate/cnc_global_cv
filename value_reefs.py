@@ -225,7 +225,7 @@ def calculate_reef_population_value(
         [x[0] for x in population_raster_path_id_target_list] +
         [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir,
         wgs84_srs.ExportToWkt(),
-        index=len(population_raster_path_id_target_list))
+        align_index=len(population_raster_path_id_target_list))
 
     raster_info = pygeoprocessing.get_raster_info(
         aligned_pop_raster_list[0])
