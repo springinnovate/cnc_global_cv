@@ -159,7 +159,7 @@ def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
     return result
 
 
-def align_raster_list(raster_path_list, target_directory):
+def align_raster_list(raster_path_list, target_directory, target_sr_wkt=None):
     """Aligns all the raster paths.
 
     Rasters are aligned using the pixel size of the first raster and use
@@ -185,7 +185,7 @@ def align_raster_list(raster_path_list, target_directory):
     pygeoprocessing.align_and_resize_raster_stack(
         raster_path_list, aligned_path_list,
         ['near'] * len(raster_path_list), target_pixel_size,
-        'intersection')
+        'intersection', target_sr_wkt=target_sr_wkt)
     return aligned_path_list
 
 
@@ -214,9 +214,12 @@ def calculate_reef_population_value(
         None
 
     """
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
     aligned_pop_raster_list = align_raster_list(
         [x[0] for x in population_raster_path_id_target_list] +
-        [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir)
+        [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir,
+        wgs84_srs.ExportToWkt())
 
     raster_info = pygeoprocessing.get_raster_info(
         aligned_pop_raster_list[0])
@@ -416,9 +419,12 @@ def calculate_reef_value(
     hab_nodata = pygeoprocessing.get_raster_info(
         reef_habitat_raster_path)['nodata'][0]
 
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+
     aligned_value_hab_raster_path_list = align_raster_list(
         [value_coverage_raster_path, reef_habitat_raster_path],
-        temp_workspace_dir)
+        temp_workspace_dir, target_sr_wkt=wgs84_srs.ExportToWkt())
 
     pygeoprocessing.raster_calculator(
         [(aligned_value_hab_raster_path_list[0], 1),
