@@ -248,8 +248,6 @@ def calculate_reef_population_value(
         temp_workspace_dir, 'reefs_all',
         REEF_PROT_DIST, buffered_point_raster_mask_path)
 
-    sys.exit()
-
     for pop_index, (_, pop_id, target_path) in enumerate(
             population_raster_path_id_target_list):
         # mask to < 10m
@@ -561,7 +559,7 @@ if __name__ == '__main__':
     wgs84_srs = osr.SpatialReference()
     wgs84_srs.ImportFromEPSG(4326)
     projected_reef_raster_path = os.path.join(CHURN_DIR, 'wgs84_reefs.tif')
-    task_graph.add_task(
+    project_reef_task = task_graph.add_task(
         func=pygeoprocessing.warp_raster,
         args=(
             tdd_downloader.get_path('reefs'), reef_degree_pixel_size,
@@ -589,6 +587,7 @@ if __name__ == '__main__':
             #         projected_reef_raster_path, WORKSPACE_DIR,
             #         reefs_value_raster_path),
             #     target_path_list=[reefs_value_raster_path],
+            #     dependent_task_list=[project_reef_task],
             #     task_name='calculate reef value for %s' % basename)
 
             task_graph.add_task(
@@ -600,6 +599,7 @@ if __name__ == '__main__':
                       reefs_poor_pop_coverage_raster_path),
                      (tdd_downloader.get_path('poor_pop'), 'poor_pop',
                       reefs_total_pop_coverage_raster_path)], WORKSPACE_DIR),
+                dependent_task_list=[project_reef_task],
                 target_path_list=[
                     reefs_poor_pop_coverage_raster_path,
                     reefs_total_pop_coverage_raster_path],
