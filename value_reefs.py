@@ -191,8 +191,8 @@ def align_raster_list(raster_path_list, target_directory):
 
 def calculate_reef_population_value(
         shore_sample_point_vector_path, dem_raster_path,
-        reef_habitat_raster_path,
-        population_raster_path_id_target_list, temp_workspace_dir):
+        reef_habitat_raster_path, population_raster_path_id_target_list,
+        temp_workspace_dir):
     """Calculate population within protective range of reefs.
 
     Parameters:
@@ -214,13 +214,12 @@ def calculate_reef_population_value(
         None
 
     """
-
     aligned_pop_raster_list = align_raster_list(
         [x[0] for x in population_raster_path_id_target_list] +
         [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir)
 
     raster_info = pygeoprocessing.get_raster_info(
-        population_raster_path_id_target_list[0][0])
+        aligned_pop_raster_list[0][0])
     target_pixel_size = raster_info['pixel_size']
 
     n_pixels_in_prot_dist = max(1, int(REEF_PROT_DIST / (
@@ -230,6 +229,14 @@ def calculate_reef_population_value(
         temp_workspace_dir, 'reef_kernel.tif')
     create_averaging_kernel_raster(
         kernel_radius, kernel_filepath, normalize=False)
+
+    buffered_point_raster_mask_path = os.path.join(
+            temp_workspace_dir, 'reef_buffer_mask.tif')
+    make_buffered_point_raster_mask(
+        shore_sample_point_vector_path,
+        aligned_pop_raster_list[0],
+        temp_workspace_dir, 'reefs_all',
+        REEF_PROT_DIST, buffered_point_raster_mask_path)
 
     for pop_index, (_, pop_id, target_path) in enumerate(
             population_raster_path_id_target_list):
@@ -250,11 +257,11 @@ def calculate_reef_population_value(
             M_PER_DEGREE * abs(target_pixel_size[0])))
         kernel_radius_2km = [n_pixels_in_2km, n_pixels_in_2km]
         kernel_2km_filepath = os.path.join(
-            temp_workspace_dir, '2km_kernel.tif')
+            temp_workspace_dir, '2km_kernel_%s.tif' % pop_id)
         create_averaging_kernel_raster(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
         pop_sum_within_2km_path = os.path.join(
-            temp_workspace_dir, '%s_pop_sum_within_2km.tif' % pop_id)
+            temp_workspace_dir, 'pop_sum_within_2km_%s.tif' % pop_id)
         pygeoprocessing.convolve_2d(
             (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
             pop_sum_within_2km_path)
@@ -280,14 +287,6 @@ def calculate_reef_population_value(
         hab_spread_nodata = pygeoprocessing.get_raster_info(
             clipped_pop_hab_spread_raster_path)['nodata'][0]
         hab_nodata = hab_raster_info['nodata'][0]
-
-        buffered_point_raster_mask_path = os.path.join(
-            temp_workspace_dir, 'reef_buffer_mask.tif')
-        make_buffered_point_raster_mask(
-            shore_sample_point_vector_path,
-            clipped_pop_hab_spread_raster_path,
-            temp_workspace_dir, 'reefs_all',
-            REEF_PROT_DIST, buffered_point_raster_mask_path)
 
         pygeoprocessing.raster_calculator(
             [(clipped_pop_hab_spread_raster_path, 1),
@@ -370,6 +369,8 @@ def calculate_reef_value(
         # for each point, convert to local UTM to buffer out a given
         # distance then back to wgs84
         point_geom = point_feature.GetGeometryRef()
+        if point_geom.GetX() > 178 or point_geom.GetX() < -178:
+            continue
         utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
         wgs84_to_utm_transform = osr.CoordinateTransformation(
             wgs84_srs, utm_srs)
@@ -527,7 +528,7 @@ if __name__ == '__main__':
         except OSError:
             pass
 
-    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, -1)
+    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, 2, 5.0)
     tdd_downloader = taskgraph_downloader_pnn.TaskGraphDownloader(
         ECOSHARD_DIR, task_graph)
 
@@ -552,17 +553,29 @@ if __name__ == '__main__':
             reefs_total_pop_coverage_raster_path = os.path.join(
                 WORKSPACE_DIR, "reefs_total_pop_coverage_%s.tif" % basename)
 
-            calculate_reef_value(
-                cv_vector_path, tdd_downloader.get_path('global_dem'),
-                tdd_downloader.get_path('reefs'), WORKSPACE_DIR,
-                reefs_value_raster_path)
-            calculate_reef_population_value(
-                cv_vector_path, tdd_downloader.get_path('global_dem'),
-                tdd_downloader.get_path('reefs'),
-                [(tdd_downloader.get_path('total_pop'), 'total_pop',
-                  reefs_poor_pop_coverage_raster_path),
-                 (tdd_downloader.get_path('poor_pop'), 'poor_pop',
-                  reefs_total_pop_coverage_raster_path)], WORKSPACE_DIR)
+            task_graph.add_task(
+                func=calculate_reef_value,
+                args=(
+                    cv_vector_path, tdd_downloader.get_path('reefs'),
+                    tdd_downloader.get_path('reefs'), WORKSPACE_DIR,
+                    reefs_value_raster_path),
+                target_path_list=[reefs_value_raster_path],
+                task_name='calculate reef value for %s' % basename)
+
+            task_graph.add_task(
+                func=calculate_reef_population_value,
+                args=(
+                    cv_vector_path, tdd_downloader.get_path('global_dem'),
+                    tdd_downloader.get_path('reefs'),
+                    [(tdd_downloader.get_path('total_pop'), 'total_pop',
+                      reefs_poor_pop_coverage_raster_path),
+                     (tdd_downloader.get_path('poor_pop'), 'poor_pop',
+                      reefs_total_pop_coverage_raster_path)], WORKSPACE_DIR),
+                target_path_list=[
+                    reefs_poor_pop_coverage_raster_path,
+                    reefs_total_pop_coverage_raster_path],
+                task_name='calculate reef population value')
+            task_graph.join()
 
     task_graph.join()
     task_graph.close()
