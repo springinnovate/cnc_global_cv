@@ -219,7 +219,7 @@ def calculate_reef_population_value(
         [reef_habitat_raster_path, dem_raster_path], temp_workspace_dir)
 
     raster_info = pygeoprocessing.get_raster_info(
-        aligned_pop_raster_list[0][0])
+        aligned_pop_raster_list[0])
     target_pixel_size = raster_info['pixel_size']
 
     n_pixels_in_prot_dist = max(1, int(REEF_PROT_DIST / (
