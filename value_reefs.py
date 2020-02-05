@@ -50,6 +50,7 @@ LOGGER = logging.getLogger(__name__)
 
 WORKSPACE_DIR = 'value_reefs_workspace'
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
+CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 
 
 def clean_convolve_2d(
@@ -246,6 +247,8 @@ def calculate_reef_population_value(
         aligned_pop_raster_list[0],
         temp_workspace_dir, 'reefs_all',
         REEF_PROT_DIST, buffered_point_raster_mask_path)
+
+    sys.exit()
 
     for pop_index, (_, pop_id, target_path) in enumerate(
             population_raster_path_id_target_list):
@@ -534,7 +537,7 @@ if __name__ == '__main__':
         help='Can be a pattern to a file.')
     args = parser.parse_args()
 
-    for dir_path in [WORKSPACE_DIR, ECOSHARD_DIR]:
+    for dir_path in [WORKSPACE_DIR, ECOSHARD_DIR, CHURN_DIR]:
         try:
             os.makedirs(dir_path)
         except OSError:
@@ -553,6 +556,20 @@ if __name__ == '__main__':
         POVERTY_POPULATION_RASTER_URL, 'poor_pop')
     tdd_downloader.download_ecoshard(
         GLOBAL_DEM_RASTER_URL, 'global_dem')
+
+    reef_degree_pixel_size = [0.004, -0.004]
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    projected_reef_raster_path = os.path.join(CHURN_DIR, 'wgs84_reefs.tif')
+    task_graph.add_task(
+        func=pygeoprocessing.warp_raster,
+        args=(
+            tdd_downloader.get_path('reefs'), reef_degree_pixel_size,
+            projected_reef_raster_path, 'near'),
+        kwargs={'target_sr_wkt': wgs84_srs.ExportToWkt()},
+        target_path_list=[projected_reef_raster_path],
+        task_name='project reefs to wgs84')
+
     for cv_risk_vector_pattern in args.cv_risk_vector_pattern:
         for cv_vector_path in glob.glob(cv_risk_vector_pattern):
             basename = os.path.basename(os.path.splitext(cv_vector_path)[0])
@@ -565,20 +582,20 @@ if __name__ == '__main__':
             reefs_total_pop_coverage_raster_path = os.path.join(
                 WORKSPACE_DIR, "reefs_total_pop_coverage_%s.tif" % basename)
 
-            task_graph.add_task(
-                func=calculate_reef_value,
-                args=(
-                    cv_vector_path, tdd_downloader.get_path('reefs'),
-                    tdd_downloader.get_path('reefs'), WORKSPACE_DIR,
-                    reefs_value_raster_path),
-                target_path_list=[reefs_value_raster_path],
-                task_name='calculate reef value for %s' % basename)
+            # task_graph.add_task(
+            #     func=calculate_reef_value,
+            #     args=(
+            #         cv_vector_path, tdd_downloader.get_path('reefs'),
+            #         projected_reef_raster_path, WORKSPACE_DIR,
+            #         reefs_value_raster_path),
+            #     target_path_list=[reefs_value_raster_path],
+            #     task_name='calculate reef value for %s' % basename)
 
             task_graph.add_task(
                 func=calculate_reef_population_value,
                 args=(
                     cv_vector_path, tdd_downloader.get_path('global_dem'),
-                    tdd_downloader.get_path('reefs'),
+                    projected_reef_raster_path,
                     [(tdd_downloader.get_path('total_pop'), 'total_pop',
                       reefs_poor_pop_coverage_raster_path),
                      (tdd_downloader.get_path('poor_pop'), 'poor_pop',
