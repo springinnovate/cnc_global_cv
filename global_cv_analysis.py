@@ -81,7 +81,7 @@ LS_POPULATION_RASTER_URL = (
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
 POVERTY_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'Poverty_Count_2017_clean_md5_0cc6e0187be07e760e66f759a0a1f7e8.tif')
+    'Poverty_Count_Redo_compressed_md5_0348d079fe323397b8175749391b4af2.tif')
 SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
@@ -155,6 +155,8 @@ FINAL_HAB_FIELDS = REEF_FIELDS + [
     'mangroves_forest',
     'saltmarsh_wetland',
     'seagrass',
+    '4_500',
+    '2_2000',
 ]
 
 
@@ -2411,6 +2413,21 @@ def download_data(**kwargs):
             local_data_path_map['shore_buffer_vector_path']),
         target_path_list=[local_data_path_map['shore_buffer_vector_path']],
         task_name='download global_vector')
+
+    reef_degree_pixel_size = [0.004, -0.004]
+    wgs84_srs = osr.SpatialReference()
+    wgs84_srs.ImportFromEPSG(4326)
+    projected_reef_raster_path = os.path.join(CHURN_DIR, 'wgs84_reefs.tif')
+    project_reef_task = task_graph.add_task(
+        func=pygeoprocessing.warp_raster,
+        args=(
+            local_data_path_map['reefs'], reef_degree_pixel_size,
+            projected_reef_raster_path, 'near'),
+        kwargs={'target_sr_wkt': wgs84_srs.ExportToWkt()},
+        target_path_list=[projected_reef_raster_path],
+        task_name='project reefs to wgs84')
+    project_reef_task.join()
+    local_data_path_map['reefs'] = projected_reef_raster_path
 
     task_graph.join()
     task_graph.close()
