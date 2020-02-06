@@ -2501,27 +2501,14 @@ def set_almost_zero_to_zero(array, eps):
     return result
 
 
-def calculate_degree_cell_cv(local_data_path_map, target_cv_vector_path):
-    """Process all global degree grids to calculate local hab risk.
-
-    Paramters:
-        args (dict):
-        local_data_path_map (dict): maps keys from GLOBAL_DATA_URL to the
-            local filepaths.
+def preprocess_habitat():
+    """Merge and filter all the habitat layers.
 
     Returns:
-        None
+        dictionary of habitat id to (raster path, risk, dist) tuples.
 
     """
-    for dir_path in [
-            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
-        try:
-            os.makedirs(dir_path)
-        except OSError:
-            pass
-
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
-
     lulc_shore_mask_raster_path = os.path.join(
         CHURN_DIR, 'lulc_masked_by_shore.tif')
     mask_lulc_by_shore_task = task_graph.add_task(
@@ -2628,6 +2615,30 @@ def calculate_degree_cell_cv(local_data_path_map, target_cv_vector_path):
         habitat_raster_risk_map[str_index] = (
             habitat_raster_risk_map[tuple_index])
         del habitat_raster_risk_map[tuple_index]
+    return habitat_raster_risk_map
+
+
+def calculate_degree_cell_cv(
+        local_data_path_map, habitat_raster_risk_map, target_cv_vector_path):
+    """Process all global degree grids to calculate local hab risk.
+
+    Paramters:
+        local_data_path_map (dict): maps keys from GLOBAL_DATA_URL to the
+            local filepaths.
+        habitat_raster_risk_map (dict): maps habitat layers to raster masks,
+            indexed by habitat id maps to tuple of
+            (raster path, risk val, distance).
+
+    Returns:
+        None
+
+    """
+    for dir_path in [
+            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
+        try:
+            os.makedirs(dir_path)
+        except OSError:
+            pass
 
     shore_grid_vector = gdal.OpenEx(
         local_data_path_map['shore_grid'], gdal.OF_VECTOR)
@@ -2795,9 +2806,11 @@ if __name__ == '__main__':
                 os.path.basename(landcover_url))[0]
             target_cv_vector_path = os.path.join(
                 WORKSPACE_DIR, '%s.gpkg' % landcover_basename)
+            habitat_raster_risk_dist_map = preprocess_habitat()
             if not args.skip_main:
                 calculate_degree_cell_cv(
-                    local_data_path_map, target_cv_vector_path)
+                    local_data_path_map, habitat_raster_risk_dist_map,
+                    target_cv_vector_path)
             LOGGER.info('calculating population back projection')
             ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
             poor_population_raster_path = os.path.join(
@@ -2814,14 +2827,15 @@ if __name__ == '__main__':
                     [(ls_population_raster_path, 'total_pop'),
                      (poor_population_raster_path, 'poor_pop')],
                     global_dem_raster_path, FINAL_HAB_FIELDS,
-                    HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+                    habitat_raster_risk_dist_map, HABITAT_VALUE_DIR)
             if not args.skip_hab_value:
                 local_lulc_raster_path = os.path.join(
                     ECOSHARD_DIR, os.path.basename(landcover_url))
                 LOGGER.info('starting hab value calc')
                 calculate_habitat_value(
                     target_cv_vector_path, local_lulc_raster_path,
-                    FINAL_HAB_FIELDS, HABITAT_VECTOR_PATH_MAP, HABITAT_VALUE_DIR)
+                    FINAL_HAB_FIELDS, habitat_raster_risk_dist_map,
+                    HABITAT_VALUE_DIR)
     except Exception:
         LOGGER.exception('error in main')
     LOGGER.info('completed successfully')
