@@ -2201,7 +2201,8 @@ def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
 
 def calculate_habitat_value(
         shore_sample_point_vector, template_raster_path,
-        habitat_fieldname_list, habitat_vector_path_map, results_dir):
+        habitat_fieldname_list, habitat_vector_path_map, results_dir,
+        habitat_value_token_path):
     """Calculate habitat value.
 
     Will create rasters in the `results_dir` directory named from the
@@ -2223,6 +2224,7 @@ def calculate_habitat_value(
              protective distance (float)).
         results_dir (str): path to directory containing habitat back projection
             results
+        habitat_value_token_path (str): path to file to write when done
 
     Returns:
         None.
@@ -2336,6 +2338,9 @@ def calculate_habitat_value(
             value_coverage_nodata)
 
         ecoshard.build_overviews(habitat_value_raster_path)
+
+    with open(habitat_value_token_path, 'w') as habitat_value_file:
+        habitat_value_file.write(str(datetime.datetime.now()))
 
 
 def intersect_and_mask_raster_op(
@@ -2867,6 +2872,11 @@ if __name__ == '__main__':
                 target_path_list=[habitat_value_token_path],
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
+
+calculate_habitat_value(
+        shore_sample_point_vector, template_raster_path,
+        habitat_fieldname_list, habitat_vector_path_map, results_dir):
+
     except Exception:
         LOGGER.exception('error in main')
 
