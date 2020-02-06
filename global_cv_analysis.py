@@ -8,6 +8,7 @@ https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/
 import argparse
 import bisect
 import collections
+import datetime
 import gzip
 import logging
 import math
@@ -2012,7 +2013,7 @@ def add_cv_vector_risk(cv_risk_vector_path):
 def calculate_habitat_population_value(
         shore_sample_point_vector_path, population_raster_path_id_list,
         dem_raster_path, habitat_fieldname_list, habitat_vector_path_map,
-        results_dir):
+        results_dir, habitat_pop_value_token_path):
     """Calculate population within protective range of habitat.
 
     Parameters:
@@ -2033,6 +2034,8 @@ def calculate_habitat_population_value(
              protective distance (float)).
         results_dir (str): path to directory containing habitat back projection
             results
+        habitat_pop_value_token_path (str): path to a file to create if the
+            run is successful.
 
     Returns:
         None
@@ -2182,6 +2185,8 @@ def calculate_habitat_population_value(
     task_graph.join()
     task_graph.close()
     del task_graph
+    with open(habitat_pop_value_token_path, 'w') as hab_pop_token_file:
+        hab_pop_token_file.write(str(datetime.datetime.now()))
 
 
 def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
@@ -2697,7 +2702,8 @@ def calculate_degree_cell_cv(
     cv_point_complete_queue.put(STOP_SENTINEL)
     merge_cv_points_thread.join()
 
-    LOGGER.debug('cv grid joined')
+    LOGGER.debug('calculate cv vector risk')
+    add_cv_vector_risk(target_cv_vector_path)
 
 
 def make_buffered_point_raster_mask(
@@ -2765,19 +2771,14 @@ def make_buffered_point_raster_mask(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Global CV analysis')
     parser.add_argument(
-        'n_workers', help='Number of workers.')
+        'landcover_file',
+        help='Path to file that lists landcover scenarios to run.')
     parser.add_argument(
-        '--skip_main', action='store_true', help='Skip main CV analysis.')
-    parser.add_argument(
-        '--skip_hab_pop_value', action='store_true')
-    parser.add_argument(
-        '--skip_cv_vector_risk', action='store_true')
-    parser.add_argument(
-        '--skip_hab_value', action='store_true')
+        '--n_workers', default=multiprocessing.cpu_count(),
+        help='Number of workers.')
     parser.add_argument(
         '--shore_point_sample_distance', type=float, default=2000.0,
         help='Distance between shore sample points in meters.')
-
     parser.add_argument(
         '--dasgupta_mode', action='store_true',
         help='Ignore offshore mangrove and saltmarsh')
@@ -2797,45 +2798,77 @@ if __name__ == '__main__':
         GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
         GLOBAL_SEAGRASS_RASTER_URL = EMPTY_RASTER_URL
 
+    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, 0, 5.0)
+
     try:
-        with open(LANDCOVER_RASTER_DATA_FILE, 'r') as landcover_raster_file:
+        with open(args.landcover_file, 'r') as landcover_raster_file:
             landcover_url_list = landcover_raster_file.read().splitlines()
         for landcover_url in landcover_url_list:
             local_data_path_map = download_data(lulc=landcover_url)
             landcover_basename = os.path.splitext(
                 os.path.basename(landcover_url))[0]
+            local_workspace_dir = os.path.join(
+                WORKSPACE_DIR, landcover_basename)
+            local_habitat_value_dir = os.path.join(
+                WORKSPACE_DIR, landcover_basename, 'value_rasters')
+            for dir_path in [local_workspace_dir, local_habitat_value_dir]:
+                try:
+                    os.makedirs(dir_path)
+                except OSError:
+                    pass
             target_cv_vector_path = os.path.join(
-                WORKSPACE_DIR, '%s.gpkg' % landcover_basename)
+                local_workspace_dir, '%s.gpkg' % landcover_basename)
             habitat_raster_risk_dist_map = preprocess_habitat()
-            if not args.skip_main:
-                calculate_degree_cell_cv(
+            calculate_cv_vector_task = task_graph.add_task(
+                func=calculate_degree_cell_cv,
+                args=(
                     local_data_path_map, habitat_raster_risk_dist_map,
-                    target_cv_vector_path)
+                    target_cv_vector_path),
+                target_path_list=[target_cv_vector_path],
+                task_name='calculate CV for %s' % landcover_basename)
+
             LOGGER.info('calculating population back projection')
             ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
             poor_population_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
             global_dem_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
-            LOGGER.info('starting cv vector risk')
-            if not args.skip_cv_vector_risk:
-                add_cv_vector_risk(target_cv_vector_path)
-                LOGGER.debug('finishing cv vector risk')
-            if not args.skip_hab_pop_value:
-                calculate_habitat_population_value(
+            habitat_pop_value_token_path = os.path.join(
+                local_habitat_value_dir, 'hab_population_value.TOKEN')
+            task_graph.add_task(
+                func=calculate_habitat_population_value,
+                args=(
                     target_cv_vector_path,
                     [(ls_population_raster_path, 'total_pop'),
                      (poor_population_raster_path, 'poor_pop')],
                     global_dem_raster_path, FINAL_HAB_FIELDS,
-                    habitat_raster_risk_dist_map, HABITAT_VALUE_DIR)
-            if not args.skip_hab_value:
-                local_lulc_raster_path = os.path.join(
-                    ECOSHARD_DIR, os.path.basename(landcover_url))
-                LOGGER.info('starting hab value calc')
-                calculate_habitat_value(
+                    habitat_raster_risk_dist_map, local_habitat_value_dir,
+                    habitat_pop_value_token_path),
+                target_path_list=[habitat_pop_value_token_path],
+                dependent_task_list=[calculate_cv_vector_task],
+                task_name=(
+                    'calculate habitat population for %s' %
+                    landcover_basename))
+
+            local_lulc_raster_path = os.path.join(
+                ECOSHARD_DIR, os.path.basename(landcover_url))
+            LOGGER.info('starting hab value calc')
+
+            habitat_value_token_path = os.path.join(
+                local_habitat_value_dir, 'hab_value.TOKEN')
+            task_graph.add_task(
+                func=calculate_habitat_value,
+                args=(
                     target_cv_vector_path, local_lulc_raster_path,
                     FINAL_HAB_FIELDS, habitat_raster_risk_dist_map,
-                    HABITAT_VALUE_DIR)
+                    local_habitat_value_dir, habitat_value_token_path),
+                dependent_task_list=[calculate_cv_vector_task],
+                target_path_list=[habitat_value_token_path],
+                task_name=(
+                    'calculate habitat value for %s' % landcover_basename))
     except Exception:
         LOGGER.exception('error in main')
+
+    task_graph.join()
+    task_graph.close()
     LOGGER.info('completed successfully')
