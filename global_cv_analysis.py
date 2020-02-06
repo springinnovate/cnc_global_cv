@@ -2873,10 +2873,6 @@ if __name__ == '__main__':
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
 
-calculate_habitat_value(
-        shore_sample_point_vector, template_raster_path,
-        habitat_fieldname_list, habitat_vector_path_map, results_dir):
-
     except Exception:
         LOGGER.exception('error in main')
 
