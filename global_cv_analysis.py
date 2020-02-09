@@ -2277,6 +2277,9 @@ def calculate_habitat_value(
             utm_to_wgs84_transform = osr.CoordinateTransformation(
                 utm_srs, wgs84_srs)
             point_geom.Transform(wgs84_to_utm_transform)
+            x_val = point_geom.GetX()
+            if (x_val < -179.8) or (x_val > 179.8):
+                continue
             buffer_poly_geom = point_geom.Buffer(protective_distance)
             buffer_poly_geom.Transform(utm_to_wgs84_transform)
 
@@ -2747,6 +2750,9 @@ def make_buffered_point_raster_mask(
         utm_to_wgs84_transform = osr.CoordinateTransformation(
             utm_srs, wgs84_srs)
         point_geom.Transform(wgs84_to_utm_transform)
+        x_val = point_geom.GetX()
+        if (x_val < -179.8) or (x_val > 179.8):
+            continue
         buffer_poly_geom = point_geom.Buffer(protective_distance)
         buffer_poly_geom.Transform(utm_to_wgs84_transform)
 
