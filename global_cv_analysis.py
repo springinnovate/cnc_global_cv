@@ -82,7 +82,7 @@ LS_POPULATION_RASTER_URL = (
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
 POVERTY_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'Poverty_Count_Redo_compressed_md5_0348d079fe323397b8175749391b4af2.tif')
+    'Poverty_Count_nans_cleaned_md5_c3d4e9443997889f2706e9600e72c975.tif')
 SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
