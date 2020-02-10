@@ -2271,15 +2271,15 @@ def calculate_habitat_value(
             # for each point, convert to local UTM to buffer out a given
             # distance then back to wgs84
             point_geom = point_feature.GetGeometryRef()
+            x_val = point_geom.GetX()
+            if (x_val < -179.8) or (x_val > 179.8):
+                continue
             utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
             wgs84_to_utm_transform = osr.CoordinateTransformation(
                 wgs84_srs, utm_srs)
             utm_to_wgs84_transform = osr.CoordinateTransformation(
                 utm_srs, wgs84_srs)
             point_geom.Transform(wgs84_to_utm_transform)
-            x_val = point_geom.GetX()
-            if (x_val < -179.8) or (x_val > 179.8):
-                continue
             buffer_poly_geom = point_geom.Buffer(protective_distance)
             buffer_poly_geom.Transform(utm_to_wgs84_transform)
 
