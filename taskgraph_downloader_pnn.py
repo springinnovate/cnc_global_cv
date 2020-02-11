@@ -153,6 +153,7 @@ class TaskGraphDownloader(object):
         for download_map in self.key_to_path_task_map.values():
             download_map['download_task'].join()
 
+
 @retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=10000)
 def download_and_unzip(url, target_dir, target_token_path):
     """Download `url` to `target_dir` and touch `target_token_path`.

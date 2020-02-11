@@ -93,7 +93,7 @@ GLOBAL_GEOMORPHOLOGY_VECTOR_URL = (
 # The reefs raster is not in wgs84 but the script below projects it so
 GLOBAL_REEFS_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'ipbes-cv_reef_md5_5a90d55a505813b5aa9662faee351bf8.tif')
+    'ipbes-cv_reef_wgs84_compressed_md5_96d95cc4f2c5348394eccff9e8b84e6b.tif')
 GLOBAL_MANGROVES_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'ipbes-cv_mangrove_md5_0ec85cb51dab3c9ec3215783268111cc.tif')
