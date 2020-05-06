@@ -2809,7 +2809,7 @@ if __name__ == '__main__':
 
     if args.dasgupta_mode:
         GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
-        GLOBAL_SEAGRASS_RASTER_URL = EMPTY_RASTER_URL
+        GLOBAL_SALTMARSH_RASTER_URL = EMPTY_RASTER_URL
 
     task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, 0, 5.0)
 
