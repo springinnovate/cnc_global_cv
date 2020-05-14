@@ -1627,6 +1627,12 @@ def create_averaging_kernel_raster(
         kernel_filepath, int(2*radius_in_pixels[0]),
         int(2*radius_in_pixels[1]), 1, gdal.GDT_Float32)
 
+    LOGGER.debug(f'kernel filepath: {kernel_filepath}')
+    LOGGER.debug(f'kernel file exists? {os.path.exists(kernel_filepath)}')
+    LOGGER.debug(
+        f'kernel dir exists? '
+        f'{os.path.exists(os.path.dirname(kernel_filepath))}')
+
     # Make some kind of geotransform, it doesn't matter what but
     # will make GIS libraries behave better if it's all defined
     kernel_raster.SetGeoTransform([1, 0.1, 0, 1, 0, -0.1])
