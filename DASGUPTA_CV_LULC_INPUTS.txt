@@ -1,3 +1,2 @@
-https://storage.googleapis.com/gtap-invest-ecoshard/lulc_gtap1_esa_classes_md5_b6f7b242767e0a2f5d0063e44bbd74c6.tif
-https://storage.googleapis.com/gtap-invest-ecoshard/lulc_ssp2_esa_classes_md5_316d80b44f9df08ff8bcfa45b80e8640.tif
+https://storage.googleapis.com/gtap-invest-ecoshard/lulc_gtap1_esa_classes_v2_md5_fd5392f2818684724c202e6d087f1add.tif
 https://storage.googleapis.com/gtap-invest-ecoshard/ESACCI-LC-L4-LCCS-Map-300m-P1Y-2014-v2.0.7_md5_f52951514835c2b3c8e10dbf21ef6311.tif
