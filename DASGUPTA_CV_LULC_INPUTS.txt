@@ -1,4 +1,1 @@
-https://storage.googleapis.com/gtap-invest-ecoshard/lulc_gtap1-bau_esa_classes_md5_d0ddbeb2f7717c5e69016b9eb59e6e36.tif
 https://storage.googleapis.com/gtap-invest-ecoshard/lulc_gtap1-pes_esa_classes_md5_219590831d116ff455bb1273ee5f1236.tif
-https://storage.googleapis.com/gtap-invest-ecoshard/lulc_gtap1-rd_esa_classes_md5_9b24cfc51fefc8362058ec656af091f2.tif
-https://storage.googleapis.com/gtap-invest-ecoshard/lulc_gtap1-subs_esa_classes_md5_fde00f7f77e143bca0541ca2f8cfd9e6.tif
