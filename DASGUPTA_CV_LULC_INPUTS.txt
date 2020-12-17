@@ -1,4 +1,2 @@
-https://storage.googleapis.com/gtap-invest-ecoshard/gtap1_2030_policy_scenarios_lulc_v2020-09-01a/lulc_bau_esa_classes.tif
-https://storage.googleapis.com/gtap-invest-ecoshard/gtap1_2030_policy_scenarios_lulc_v2020-09-01a/lulc_pes_esa_classes.tif
-https://storage.googleapis.com/gtap-invest-ecoshard/gtap1_2030_policy_scenarios_lulc_v2020-09-01a/lulc_rd_esa_classes.tif
-https://storage.googleapis.com/gtap-invest-ecoshard/gtap1_2030_policy_scenarios_lulc_v2020-09-01a/lulc_subs_esa_classes.tif
+https://storage.googleapis.com/ecoshard-root/esa_lulc_smoothed/ESACCI-LC-L4-LCCS-Map-300m-P1Y-2000-v2.0.7.tif
+https://storage.googleapis.com/ecoshard-root/esa_lulc_smoothed/ESACCI-LC-L4-LCCS-Map-300m-P1Y-2018-v2.1.1.tif
