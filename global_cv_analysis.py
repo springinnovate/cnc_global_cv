@@ -79,7 +79,7 @@ GLOBAL_DEM_RASTER_URL = (
     'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
 LS_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
+    'lspop2000_md5_ae7e14b0a2c060ceb162a1d232114903.zip') 
 POVERTY_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'Poverty_Count_nans_cleaned_md5_c3d4e9443997889f2706e9600e72c975.tif')
