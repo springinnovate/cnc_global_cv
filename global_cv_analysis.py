@@ -33,6 +33,8 @@ import shapely.strtree
 import shapely.wkt
 import taskgraph
 
+gdal.SetCacheMax(2**27)
+
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
@@ -79,7 +81,7 @@ GLOBAL_DEM_RASTER_URL = (
     'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
 LS_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'lspop2000_md5_ae7e14b0a2c060ceb162a1d232114903.zip') 
+    'lspop2000_md5_ae7e14b0a2c060ceb162a1d232114903.zip')
 POVERTY_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'Poverty_Count_nans_cleaned_md5_c3d4e9443997889f2706e9600e72c975.tif')
@@ -212,9 +214,6 @@ LULC_CODE_TO_HAB_MAP = {
     210: (0, None),
     220: (0, None),
     }
-
-# set a 1GB limit for the cache
-gdal.SetCacheMax(2**30)
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -2056,6 +2055,9 @@ def calculate_habitat_population_value(
             os.makedirs(results_dir)
         except OSError:
             pass
+    LOGGER.info(
+        f'starting taskgraph in calculate_habitat_population_value for '
+        f'{taskgraph_working_dir}')
     task_graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
 
     aligned_pop_raster_list = align_raster_list(
@@ -2069,6 +2071,7 @@ def calculate_habitat_population_value(
         raster_info = pygeoprocessing.get_raster_info(
             aligned_pop_raster_list[pop_index])
 
+        LOGGER.info('pop height mask 10m %s' % pop_id)
         pop_height_mask_task = task_graph.add_task(
             func=pygeoprocessing.raster_calculator,
             args=(
@@ -2093,6 +2096,7 @@ def calculate_habitat_population_value(
             kernel_radius_2km, kernel_2km_filepath, normalize=False)
         pop_sum_within_2km_path = os.path.join(
             temp_workspace_dir, '%s_pop_sum_within_2km.tif' % pop_id)
+        LOGGER.info('pop sum w/in 2km %s' % pop_id)
         pop_sum_task = task_graph.add_task(
             func=pygeoprocessing.convolve_2d,
             args=(
@@ -2117,6 +2121,7 @@ def calculate_habitat_population_value(
                 kernel_radius, kernel_filepath, normalize=False)
             population_hab_spread_raster_path = os.path.join(
                 temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
+            LOGGER.info('spread pop to hab %s %s ' % (pop_id, habitat_id))
             spread_to_hab_task = task_graph.add_task(
                 func=clean_convolve_2d,
                 args=(
@@ -2133,6 +2138,7 @@ def calculate_habitat_population_value(
             clipped_pop_hab_spread_raster_path = os.path.join(
                 temp_workspace_dir, '%s_%s_spread_clipped.tif' % (
                     habitat_id, pop_id))
+            LOGGER.info('spread to hab %s %s' % (pop_id, habitat_id))
             task_graph.add_task(
                 func=pygeoprocessing.warp_raster,
                 args=(
