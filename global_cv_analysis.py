@@ -2853,7 +2853,7 @@ if __name__ == '__main__':
                 task_name='calculate CV for %s' % landcover_basename)
 
             LOGGER.info('calculating population back projection')
-            ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
+            ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2000')
             poor_population_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
             global_dem_raster_path = os.path.join(
