@@ -56,7 +56,7 @@ MAX_FETCH_DISTANCE = 60000
 M_PER_DEGREE = 111300.0
 
 ECOSHARD_BUCKET_URL = (
-    r'https://storage.googleapis.com/critical-natural-capital-ecoshards/')
+    r'https://storage.googleapis.com/critical-natural-capital-ecoshards/cv_layers')
 
 EMPTY_RASTER_URL = (
     ECOSHARD_BUCKET_URL + 'empty_md5_f8f71e20668060bda7567ca33149a45c.tif')
