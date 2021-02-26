@@ -84,7 +84,9 @@ LS_POPULATION_RASTER_URL = (
     'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
 POVERTY_POPULATION_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
-    'Poverty_Count_nans_cleaned_md5_c3d4e9443997889f2706e9600e72c975.tif')
+    'lspop_ssp3_md5_0455273be50a249ca4af001ffa2c57e9.tif')
+#subbing in for 'Poverty_Count_nans_cleaned_md5_c3d4e9443997889f2706e9600e72c975.tif'
+#it's probably not great to call this poverty count when it's actually future population but I'll change the output names
 SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
