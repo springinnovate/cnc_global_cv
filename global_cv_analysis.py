@@ -2051,10 +2051,7 @@ def calculate_habitat_population_value(
         results_dir, 'calc_pop_coverage_churn')
     taskgraph_working_dir = os.path.join(temp_workspace_dir, 'taskgraph')
     for path in [results_dir, taskgraph_working_dir, temp_workspace_dir]:
-        try:
-            os.makedirs(results_dir)
-        except OSError:
-            pass
+        os.makedirs(results_dir, exists_ok=True)
     LOGGER.info(
         f'starting taskgraph in calculate_habitat_population_value for '
         f'{taskgraph_working_dir}')
