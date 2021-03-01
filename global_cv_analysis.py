@@ -222,7 +222,7 @@ logging.basicConfig(
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
         ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'),
-    stream=sys.stdout)
+    filename='log.out')
 LOGGER = logging.getLogger(__name__)
 
 STOP_SENTINEL = 'STOP'
