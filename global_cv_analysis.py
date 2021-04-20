@@ -1528,7 +1528,7 @@ def clip_and_reproject_raster(
     pygeoprocessing.warp_raster(
         base_raster_path, target_pixel_size, target_raster_path,
         resample_method, target_bb=buffered_bounding_box,
-        target_sr_wkt=target_srs_wkt,
+        target_projection_wkt=target_srs_wkt,
         working_dir=os.path.dirname(target_raster_path))
 
 
@@ -2448,7 +2448,7 @@ def download_data(**kwargs):
         args=(
             local_data_path_map['reefs'], reef_degree_pixel_size,
             projected_reef_raster_path, 'near'),
-        kwargs={'target_sr_wkt': wgs84_srs.ExportToWkt()},
+        kwargs={'target_projection_wkt': wgs84_srs.ExportToWkt()},
         target_path_list=[projected_reef_raster_path],
         task_name='project reefs to wgs84')
     project_reef_task.join()
