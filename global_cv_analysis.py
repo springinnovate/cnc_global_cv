@@ -424,7 +424,7 @@ def cv_grid_worker(
     LOGGER.info('build geomorphology rtree')
     geomorphology_strtree = build_strtree(geomorphology_vector_path)
     geomorphology_proj_wkt = pygeoprocessing.get_vector_info(
-        geomorphology_vector_path)['projection']
+        geomorphology_vector_path)['projection_wkt']
     gegeomorphology_proj = osr.SpatialReference()
     gegeomorphology_proj.ImportFromWkt(geomorphology_proj_wkt)
 
@@ -765,7 +765,7 @@ def calculate_wind_and_wave(
         os.path.join(temp_workspace_dir, 'fetch_rays.gpkg'))
     layer_name = 'fetch_rays'
     shore_point_projection_wkt = pygeoprocessing.get_vector_info(
-        shore_point_vector_path)['projection']
+        shore_point_vector_path)['projection_wkt']
     shore_point_srs = osr.SpatialReference()
     shore_point_srs.ImportFromWkt(shore_point_projection_wkt)
     temp_fetch_rays_layer = (
@@ -1139,7 +1139,7 @@ def calculate_rhab(
             'clip %s to %s', hab_raster_path, shore_point_info['bounding_box'])
         clip_and_reproject_raster(
             hab_raster_path, local_hab_raster_path,
-            shore_point_info['projection'],
+            shore_point_info['projection_wkt'],
             shore_point_info['bounding_box'], eff_dist, 'near', False,
             target_pixel_size)
 
@@ -1502,12 +1502,12 @@ def clip_and_reproject_raster(
 
     if reproject_bounding_box:
         local_bounding_box = pygeoprocessing.transform_bounding_box(
-            target_bounding_box, base_raster_info['projection'],
+            target_bounding_box, base_raster_info['projection_wkt'],
             target_srs_wkt, edge_samples=11)
     else:
         local_bounding_box = target_bounding_box
         base_srs = osr.SpatialReference()
-        base_srs.ImportFromWkt(base_raster_info['projection'])
+        base_srs.ImportFromWkt(base_raster_info['projection_wkt'])
         target_srs = osr.SpatialReference()
         target_srs.ImportFromWkt(target_srs_wkt)
         target_to_base_transform = osr.CoordinateTransformation(
@@ -1600,7 +1600,7 @@ def estimate_projected_pixel_size(
         sample_point[1] + abs(base_pixel_size[1]/2),
     ]
     pixel_bb = pygeoprocessing.transform_bounding_box(
-        raster_center_pixel_bb, base_raster_info['projection'], target_srs_wkt)
+        raster_center_pixel_bb, base_raster_info['projection_wkt'], target_srs_wkt)
     # x goes to the right, y goes down
     estimated_pixel_size = [
         pixel_bb[2]-pixel_bb[0],
