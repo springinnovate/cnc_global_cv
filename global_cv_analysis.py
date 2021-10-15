@@ -4,6 +4,10 @@ Design doc is here:
 
 https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/edit#heading=h.bbujb61ete53
 
+Notes to Rich to change/simplify:
+- remove barrier reefs (or just make it optional to include or not; I don't think we want it for CI but may again in the future)
+- remove population processes, because we have a different code base for that now: https://github.com/therealspring/people_protected_by_coastal_habitat
+
 """
 import argparse
 import bisect
