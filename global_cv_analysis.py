@@ -5,8 +5,8 @@ Design doc is here:
 https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/edit#heading=h.bbujb61ete53
 
 Notes to Rich to change/simplify:
-- remove barrier reefs (or just make it optional to include or not; I don't think we want it for CI but may again in the future)
-- remove population processes, because we have a different code base for that now: https://github.com/therealspring/people_protected_by_coastal_habitat
+- flag to run barrier reefs or no
+- remove population processes, because we have a different code base for that now: https://github.com/therealspring/people_protected_by_coastal_habitat -- these have pop_coverage at the end
 
 """
 import argparse
@@ -23,7 +23,6 @@ import sys
 import tempfile
 import threading
 import zipfile
-
 import ecoshard
 from osgeo import gdal
 from osgeo import ogr
@@ -38,6 +37,8 @@ import shapely.wkt
 import taskgraph
 
 gdal.SetCacheMax(2**27)
+
+BARRIER_REEFS = False
 
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
@@ -83,14 +84,6 @@ GLOBAL_WWIII_GZ_URL = (
 GLOBAL_DEM_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'global_dem_md5_22c5c09ac4c4c722c844ab331b34996c.tif')
-LS_POPULATION_RASTER_URL = (
-    ECOSHARD_BUCKET_URL +
-    'lspop2017_md5_faaad64d15d0857894566199f62d422c.zip')
-POVERTY_POPULATION_RASTER_URL = (
-    ECOSHARD_BUCKET_URL +
-    'lspop_ssp3_md5_0455273be50a249ca4af001ffa2c57e9.tif')
-#subbing in for 'Poverty_Count_nans_cleaned_md5_c3d4e9443997889f2706e9600e72c975.tif'
-#it's probably not great to call this poverty count when it's actually future population but I'll change the output names
 SLR_RASTER_URL = (
     ECOSHARD_BUCKET_URL +
     'MSL_Map_MERGED_Global_AVISO_NoGIA_Adjust_'
@@ -135,13 +128,16 @@ GLOBAL_DATA_URL_MAP = {
     'slr': SLR_RASTER_URL,
     'landmass': GLOBAL_POLYGON_URL,
     'shore_grid': SHORE_GRID_URL,
-    'poverty_count': POVERTY_POPULATION_RASTER_URL,
-    'mesoamerican_barrier_reef': GLOBAL_MESOAMERICAN_BARRIER_REEF,
-    'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
-    'great_barrier_reef': GLOBAL_GREAT_BARRIER_REEF,
-    'keys_barrier_reef': GLOBAL_KEYS_BARRIER_REEF,
     'global_wwiii_vector_path': GLOBAL_WWIII_GZ_URL,
     }
+
+if s:
+    GLOBAL_DATA_URL_MAP.update({
+        'mesoamerican_barrier_reef': GLOBAL_MESOAMERICAN_BARRIER_REEF,
+        'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
+        'great_barrier_reef': GLOBAL_GREAT_BARRIER_REEF,
+        'keys_barrier_reef': GLOBAL_KEYS_BARRIER_REEF,
+    })
 
 HAB_FIELDS = [
     '4_500',
@@ -154,11 +150,15 @@ HAB_FIELDS = [
 
 REEF_FIELDS = [
     'reefs',
-    'mesoamerican_barrier_reef',
-    'new_caledonian_barrier_reef',
-    'great_barrier_reef',
-    'keys_barrier_reef',
 ]
+
+if BARRIER_REEFS:
+    REEF_FIELDS.extend([
+        'mesoamerican_barrier_reef',
+        'new_caledonian_barrier_reef',
+        'great_barrier_reef',
+        'keys_barrier_reef',
+    ])
 
 # this is used to evaluate habitat value
 FINAL_HAB_FIELDS = REEF_FIELDS + [
@@ -250,27 +250,31 @@ HABITAT_VECTOR_PATH_MAP = {
         os.path.join(
             ECOSHARD_DIR, os.path.basename(GLOBAL_DATA_URL_MAP['seagrass'])),
         4, 500.0),
-    'mesoamerican_barrier_reef': (
-        os.path.join(
-            ECOSHARD_DIR, os.path.basename(
-                GLOBAL_DATA_URL_MAP['mesoamerican_barrier_reef'])),
-        1, 35000.0),
-    'new_caledonian_barrier_reef': (
-        os.path.join(
-            ECOSHARD_DIR, os.path.basename(
-                GLOBAL_DATA_URL_MAP['new_caledonian_barrier_reef'])),
-        1, 20000.0),
-    'great_barrier_reef': (
-        os.path.join(
-            ECOSHARD_DIR, os.path.basename(
-                GLOBAL_DATA_URL_MAP['great_barrier_reef'])),
-        1, 35000.0),
-    'keys_barrier_reef': (
-        os.path.join(
-            ECOSHARD_DIR, os.path.basename(
-                GLOBAL_DATA_URL_MAP['keys_barrier_reef'])),
-        1, 25000.0),
     }
+
+if BARRIER_REEFS:
+    HABITAT_VECTOR_PATH_MAP.update({
+        'mesoamerican_barrier_reef': (
+            os.path.join(
+                ECOSHARD_DIR, os.path.basename(
+                    GLOBAL_DATA_URL_MAP['mesoamerican_barrier_reef'])),
+            1, 35000.0),
+        'new_caledonian_barrier_reef': (
+            os.path.join(
+                ECOSHARD_DIR, os.path.basename(
+                    GLOBAL_DATA_URL_MAP['new_caledonian_barrier_reef'])),
+            1, 20000.0),
+        'great_barrier_reef': (
+            os.path.join(
+                ECOSHARD_DIR, os.path.basename(
+                    GLOBAL_DATA_URL_MAP['great_barrier_reef'])),
+            1, 35000.0),
+        'keys_barrier_reef': (
+            os.path.join(
+                ECOSHARD_DIR, os.path.basename(
+                    GLOBAL_DATA_URL_MAP['keys_barrier_reef'])),
+            1, 25000.0),
+        })
 
 
 def download_and_unzip(url, target_dir, target_token_path):
@@ -1842,9 +1846,14 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
     fields_to_copy = [
         'Rgeomorphology', 'surge', 'ew', 'rei', 'slr', 'relief',
         '4_500', '2_2000', 'reefs', 'mangroves_forest', 'saltmarsh_wetland',
-        'seagrass', 'mesoamerican_barrier_reef', 'new_caledonian_barrier_reef',
-        'great_barrier_reef', 'keys_barrier_reef',
+        'seagrass',
         ]
+
+    if BARRIER_REEFS:
+        fields_to_copy.extend([
+            'mesoamerican_barrier_reef', 'new_caledonian_barrier_reef',
+            'great_barrier_reef', 'keys_barrier_reef',
+            ])
 
     for field_id in fields_to_copy:
         target_cv_layer.CreateField(ogr.FieldDefn(field_id, ogr.OFTReal))
@@ -2020,189 +2029,6 @@ def add_cv_vector_risk(cv_risk_vector_path):
 
         cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
-
-
-def calculate_habitat_population_value(
-        shore_sample_point_vector_path, population_raster_path_id_list,
-        dem_raster_path, habitat_fieldname_list, habitat_vector_path_map,
-        results_dir, habitat_pop_value_token_path):
-    """Calculate population within protective range of habitat.
-
-    Parameters:
-        shore_sample_point_vector_path (str): path to a point shapefile that is only
-            used for referencing the points of interest on the coastline.
-        population_raster_path_id_list (list): list of (raster_path, field_id)
-            tuples. The values in the raster paths will be masked where it
-            overlaps with < 10m dem height and convolved within 2km. That
-            result is in turn spread onto the habitat coverage at a distance
-            of the protective distance of that habitat. These rasters are in
-            wgs84 lat/lng projection.
-        dem_raster_path (str): path to a dem used to mask population by height
-            in wgs84 lat/lng projection.
-        habitat_fieldname_list (list): list of habitat ids to analyse.
-        habitat_vector_path_map (dict): maps fieldnames from
-            `habitat_fieldname_list` to 3-tuples of
-            (path to hab raster (str), risk val (float),
-             protective distance (float)).
-        results_dir (str): path to directory containing habitat back projection
-            results
-        habitat_pop_value_token_path (str): path to a file to create if the
-            run is successful.
-
-    Returns:
-        None
-
-    """
-    temp_workspace_dir = os.path.join(
-        results_dir, 'calc_pop_coverage_churn')
-    taskgraph_working_dir = os.path.join(temp_workspace_dir, 'taskgraph')
-    for path in [results_dir, taskgraph_working_dir, temp_workspace_dir]:
-        os.makedirs(results_dir, exist_ok=True)
-    LOGGER.info(
-        f'starting taskgraph in calculate_habitat_population_value for '
-        f'{taskgraph_working_dir}')
-    task_graph = taskgraph.TaskGraph(taskgraph_working_dir, -1)
-
-    aligned_pop_raster_list = align_raster_list(
-        [x[0] for x in population_raster_path_id_list] + [dem_raster_path],
-        temp_workspace_dir)
-
-    for pop_index, (_, pop_id) in enumerate(population_raster_path_id_list):
-        # mask to < 10m
-        pop_height_masked_path = os.path.join(
-            temp_workspace_dir, '%s_masked_by_10m.tif' % pop_id)
-        raster_info = pygeoprocessing.get_raster_info(
-            aligned_pop_raster_list[pop_index])
-
-        LOGGER.info('pop height mask 10m %s' % pop_id)
-        pop_height_mask_task = task_graph.add_task(
-            func=pygeoprocessing.raster_calculator,
-            args=(
-                [(aligned_pop_raster_list[pop_index], 1),
-                 (aligned_pop_raster_list[-1], 1),
-                 (10.0, 'raw'),  # mask to 10 meters
-                 (raster_info['nodata'][0], 'raw')],  # the -1 index is the dem
-                mask_by_height_op, pop_height_masked_path, gdal.GDT_Float32,
-                raster_info['nodata'][0]),
-            target_path_list=[pop_height_masked_path],
-            task_name='pop height mask 10m %s' % pop_id)
-        pop_height_mask_task.join()
-
-        target_pixel_size = raster_info['pixel_size']
-        # spread the < 10m population out 2km
-        n_pixels_in_2km = int(2000.0 / (
-            M_PER_DEGREE * abs(target_pixel_size[0])))
-        kernel_radius_2km = [n_pixels_in_2km, n_pixels_in_2km]
-        kernel_2km_filepath = os.path.join(
-            temp_workspace_dir, '2km_kernel.tif')
-        create_averaging_kernel_raster(
-            kernel_radius_2km, kernel_2km_filepath, normalize=False)
-        pop_sum_within_2km_path = os.path.join(
-            temp_workspace_dir, '%s_pop_sum_within_2km.tif' % pop_id)
-        LOGGER.info('pop sum w/in 2km %s' % pop_id)
-        pop_sum_task = task_graph.add_task(
-            func=pygeoprocessing.convolve_2d,
-            args=(
-                (pop_height_masked_path, 1), (kernel_2km_filepath, 1),
-                pop_sum_within_2km_path),
-            kwargs={'working_dir': temp_workspace_dir},
-            target_path_list=[pop_sum_within_2km_path],
-            task_name='pop sum w/in 2km %s' % pop_id)
-
-        # spread the 2km pop out by the hab distance
-        for habitat_id in habitat_fieldname_list:
-            hab_raster_path, _, prot_distance = (
-                habitat_vector_path_map[habitat_id])
-            # make a kernel that goes out the distance of the protective
-            # distance of habitat
-            n_pixels_in_prot_dist = max(1, int(prot_distance / (
-                M_PER_DEGREE * abs(target_pixel_size[0]))))
-            kernel_radius = [n_pixels_in_prot_dist, n_pixels_in_prot_dist]
-            kernel_filepath = os.path.join(
-                temp_workspace_dir, '%s_kernel.tif' % habitat_id)
-            create_averaging_kernel_raster(
-                kernel_radius, kernel_filepath, normalize=False)
-            population_hab_spread_raster_path = os.path.join(
-                temp_workspace_dir, '%s_%s_spread.tif' % (habitat_id, pop_id))
-            LOGGER.info('spread pop to hab %s %s ' % (pop_id, habitat_id))
-            spread_to_hab_task = task_graph.add_task(
-                func=clean_convolve_2d,
-                args=(
-                    (pop_sum_within_2km_path, 1), (kernel_filepath, 1),
-                    population_hab_spread_raster_path),
-                kwargs={'working_dir': temp_workspace_dir},
-                target_path_list=[population_hab_spread_raster_path],
-                dependent_task_list=[pop_sum_task],
-                task_name='spread pop to hab %s %s ' % (pop_id, habitat_id))
-
-            hab_raster_info = pygeoprocessing.get_raster_info(hab_raster_path)
-
-            # warp pop result to overlay
-            clipped_pop_hab_spread_raster_path = os.path.join(
-                temp_workspace_dir, '%s_%s_spread_clipped.tif' % (
-                    habitat_id, pop_id))
-            LOGGER.info('spread to hab %s %s' % (pop_id, habitat_id))
-            task_graph.add_task(
-                func=pygeoprocessing.warp_raster,
-                args=(
-                    population_hab_spread_raster_path,
-                    hab_raster_info['pixel_size'],
-                    clipped_pop_hab_spread_raster_path,
-                    'near'),
-                kwargs={
-                    'target_bb': hab_raster_info['bounding_box'],
-                    'working_dir': temp_workspace_dir},
-                target_path_list=[clipped_pop_hab_spread_raster_path],
-                dependent_task_list=[spread_to_hab_task],
-                task_name='spread to hab %s %s' % (pop_id, habitat_id))
-
-            # mask the convolution by the habitat mask
-            task_graph.join()
-            hab_spread_nodata = pygeoprocessing.get_raster_info(
-                clipped_pop_hab_spread_raster_path)['nodata'][0]
-            hab_nodata = pygeoprocessing.get_raster_info(
-                hab_raster_path)['nodata'][0]
-            habitat_value_raster_path = os.path.join(
-                results_dir, '%s_%s_coverage.tif' % (habitat_id, pop_id))
-
-            buffered_point_raster_mask_path = os.path.join(
-                temp_workspace_dir, '%s_buffer_mask.tif' % habitat_id)
-            buffered_raster_task = task_graph.add_task(
-                func=make_buffered_point_raster_mask,
-                args=(
-                    shore_sample_point_vector_path,
-                    clipped_pop_hab_spread_raster_path,
-                    temp_workspace_dir, habitat_id,
-                    prot_distance, buffered_point_raster_mask_path),
-                target_path_list=[buffered_point_raster_mask_path],
-                task_name='buffered point for %s' % habitat_id)
-
-            hab_value_task = task_graph.add_task(
-                func=pygeoprocessing.raster_calculator,
-                args=(
-                    [(clipped_pop_hab_spread_raster_path, 1),
-                     (hab_raster_path, 1),
-                     (buffered_point_raster_mask_path, 1),
-                     (hab_spread_nodata, 'raw'),
-                     (hab_nodata, 'raw')],
-                    intersect_and_mask_raster_op, habitat_value_raster_path,
-                    gdal.GDT_Float32, hab_spread_nodata),
-                dependent_task_list=[buffered_raster_task],
-                target_path_list=[habitat_value_raster_path],
-                task_name='mask result %s %s' % (pop_id, habitat_id))
-
-            task_graph.add_task(
-                func=ecoshard.build_overviews,
-                args=(habitat_value_raster_path,),
-                target_path_list=[habitat_value_raster_path],
-                dependent_task_list=[hab_value_task],
-                task_name='build overviews for %s' % habitat_value_raster_path)
-
-    task_graph.join()
-    task_graph.close()
-    del task_graph
-    with open(habitat_pop_value_token_path, 'w') as hab_pop_token_file:
-        hab_pop_token_file.write(str(datetime.datetime.now()))
 
 
 def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
@@ -2399,17 +2225,6 @@ def download_data(**kwargs):
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
 
     local_data_path_map = {}
-    for zip_url in [LS_POPULATION_RASTER_URL]:
-        target_token_path = os.path.join(
-            CHURN_DIR, os.path.basename(os.path.splitext(zip_url)[0]))
-        _ = task_graph.add_task(
-            func=download_and_unzip,
-            args=(zip_url, ECOSHARD_DIR, target_token_path),
-            target_path_list=[target_token_path],
-            task_name='download and unzip %s' % zip_url)
-    local_data_path_map['population'] = os.path.join(
-        ECOSHARD_DIR, os.path.basename(LS_POPULATION_RASTER_URL))
-
     for data_id, ecoshard_url in {**GLOBAL_DATA_URL_MAP, **kwargs}.items():
         local_ecoshard_path = os.path.join(
             ECOSHARD_DIR, os.path.basename(ecoshard_url))
@@ -2695,7 +2510,6 @@ def calculate_degree_cell_cv(
         LOGGER.debug('starting worker %d', worker_id)
 
     for path in [
-            local_data_path_map['population'],
             local_data_path_map['lulc'],
             local_data_path_map['global_wwiii_vector_path'],
             local_data_path_map['landmass'],
@@ -2854,29 +2668,6 @@ if __name__ == '__main__':
                     target_cv_vector_path),
                 target_path_list=[target_cv_vector_path],
                 task_name='calculate CV for %s' % landcover_basename)
-
-            LOGGER.info('calculating population back projection')
-            ls_population_raster_path = os.path.join(ECOSHARD_DIR, 'lspop2017')
-            poor_population_raster_path = os.path.join(
-                ECOSHARD_DIR, os.path.basename(POVERTY_POPULATION_RASTER_URL))
-            global_dem_raster_path = os.path.join(
-                ECOSHARD_DIR, os.path.basename(GLOBAL_DEM_RASTER_URL))
-            habitat_pop_value_token_path = os.path.join(
-                local_habitat_value_dir, 'hab_population_value.TOKEN')
-            task_graph.add_task(
-                func=calculate_habitat_population_value,
-                args=(
-                    target_cv_vector_path,
-                    [(ls_population_raster_path, 'total_pop'),
-                     (poor_population_raster_path, 'poor_pop')],
-                    global_dem_raster_path, FINAL_HAB_FIELDS,
-                    habitat_raster_risk_dist_map, local_habitat_value_dir,
-                    habitat_pop_value_token_path),
-                target_path_list=[habitat_pop_value_token_path],
-                dependent_task_list=[calculate_cv_vector_task],
-                task_name=(
-                    'calculate habitat population for %s' %
-                    landcover_basename))
 
             local_lulc_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(landcover_url))
