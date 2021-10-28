@@ -19,7 +19,6 @@ import math
 import multiprocessing
 import os
 import shutil
-import sys
 import tempfile
 import threading
 import zipfile
@@ -28,15 +27,15 @@ from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
 import numpy
-import pygeoprocessing
+from ecoshard import geoprocessing
 import retrying
 import rtree
 import shapely.geometry
 import shapely.strtree
 import shapely.wkt
-import taskgraph
+from ecoshard import taskgraph
 
-gdal.SetCacheMax(2**27)
+gdal.SetCacheMax(2**26)
 
 BARRIER_REEFS = False
 
@@ -431,7 +430,7 @@ def cv_grid_worker(
     """
     LOGGER.info('build geomorphology rtree')
     geomorphology_strtree = build_strtree(geomorphology_vector_path)
-    geomorphology_proj_wkt = pygeoprocessing.get_vector_info(
+    geomorphology_proj_wkt = geoprocessing.get_vector_info(
         geomorphology_vector_path)['projection_wkt']
     gegeomorphology_proj = osr.SpatialReference()
     gegeomorphology_proj.ImportFromWkt(geomorphology_proj_wkt)
@@ -638,7 +637,7 @@ def calculate_surge(
 
     shelf_nodata = 2
 
-    bathymetry_nodata = pygeoprocessing.get_raster_info(
+    bathymetry_nodata = geoprocessing.get_raster_info(
         bathymetry_raster_path)['nodata'][0]
 
     def mask_shelf(depth_array):
@@ -653,7 +652,7 @@ def calculate_surge(
     workspace_dir = os.path.dirname(shore_point_vector_path)
 
     shelf_mask_path = os.path.join(workspace_dir, 'shelf_mask.tif')
-    pygeoprocessing.raster_calculator(
+    geoprocessing.raster_calculator(
         [(bathymetry_raster_path, 1)], mask_shelf,
         shelf_mask_path, gdal.GDT_Byte, shelf_nodata)
 
@@ -663,12 +662,12 @@ def calculate_surge(
     shelf_convoultion_raster_path = os.path.join(
         workspace_dir, 'shelf_convolution.tif')
     make_shore_kernel(shelf_kernel_path)
-    pygeoprocessing.convolve_2d(
+    geoprocessing.convolve_2d(
         (shelf_mask_path, 1), (shelf_kernel_path, 1),
         shelf_convoultion_raster_path, target_datatype=gdal.GDT_Byte,
         target_nodata=255)
 
-    nodata = pygeoprocessing.get_raster_info(
+    nodata = geoprocessing.get_raster_info(
         shelf_convoultion_raster_path)['nodata'][0]
 
     def _shelf_mask_op(shelf_convolution):
@@ -685,16 +684,16 @@ def calculate_surge(
         return result
 
     shelf_edge_raster_path = os.path.join(workspace_dir, 'shelf_edge.tif')
-    pygeoprocessing.raster_calculator(
+    geoprocessing.raster_calculator(
         [(shelf_convoultion_raster_path, 1)], _shelf_mask_op,
         shelf_edge_raster_path, gdal.GDT_Byte, nodata)
 
-    shore_geotransform = pygeoprocessing.get_raster_info(
+    shore_geotransform = geoprocessing.get_raster_info(
         shelf_edge_raster_path)['geotransform']
 
     shelf_rtree = rtree.index.Index()
 
-    for offset_info, data_block in pygeoprocessing.iterblocks(
+    for offset_info, data_block in geoprocessing.iterblocks(
             (shelf_edge_raster_path, 1)):
         row_indexes, col_indexes = numpy.mgrid[
             offset_info['yoff']:offset_info['yoff']+offset_info['win_ysize'],
@@ -772,7 +771,7 @@ def calculate_wind_and_wave(
     temp_fetch_rays_vector = gpkg_driver.CreateDataSource(
         os.path.join(temp_workspace_dir, 'fetch_rays.gpkg'))
     layer_name = 'fetch_rays'
-    shore_point_projection_wkt = pygeoprocessing.get_vector_info(
+    shore_point_projection_wkt = geoprocessing.get_vector_info(
         shore_point_vector_path)['projection_wkt']
     shore_point_srs = osr.SpatialReference()
     shore_point_srs.ImportFromWkt(shore_point_projection_wkt)
@@ -807,7 +806,7 @@ def calculate_wind_and_wave(
     bathy_raster = gdal.OpenEx(
         bathymetry_raster_path, gdal.OF_RASTER | gdal.GA_ReadOnly)
     bathy_band = bathy_raster.GetRasterBand(1)
-    bathy_raster_info = pygeoprocessing.get_raster_info(bathymetry_raster_path)
+    bathy_raster_info = geoprocessing.get_raster_info(bathymetry_raster_path)
     bathy_gt = bathy_raster_info['geotransform']
     bathy_inv_gt = gdal.InvGeoTransform(bathy_gt)
 
@@ -1054,7 +1053,7 @@ def calculate_slr(shore_point_vector_path, slr_raster_path, target_fieldname):
         slr_field.SetPrecision(5)
         slr_field.SetWidth(24)
         shore_point_layer.CreateField(slr_field)
-        slr_info = pygeoprocessing.get_raster_info(slr_raster_path)
+        slr_info = geoprocessing.get_raster_info(slr_raster_path)
         inv_gt = gdal.InvGeoTransform(slr_info['geotransform'])
 
         slr_raster = gdal.OpenEx(slr_raster_path, gdal.OF_RASTER)
@@ -1131,7 +1130,7 @@ def calculate_rhab(
         relief_field.SetWidth(24)
         shore_point_layer.CreateField(relief_field)
 
-    shore_point_info = pygeoprocessing.get_vector_info(shore_point_vector_path)
+    shore_point_info = geoprocessing.get_vector_info(shore_point_vector_path)
 
     shore_point_feature_risk_map = collections.defaultdict(list)
 
@@ -1160,10 +1159,10 @@ def calculate_rhab(
             kernel_radius, kernel_filepath, normalize=True)
         hab_effective_area_raster_path = (
             '%s_effective_hab%s' % os.path.splitext(local_hab_raster_path))
-        pygeoprocessing.convolve_2d(
+        geoprocessing.convolve_2d(
             (local_hab_raster_path, 1), (kernel_filepath, 1),
             hab_effective_area_raster_path, mask_nodata=False)
-        gt = pygeoprocessing.get_raster_info(
+        gt = geoprocessing.get_raster_info(
             hab_effective_area_raster_path)['geotransform']
         inv_gt = gdal.InvGeoTransform(gt)
 
@@ -1385,7 +1384,7 @@ def calculate_relief(
         relief_field.SetPrecision(5)
         relief_field.SetWidth(24)
         shore_point_layer.CreateField(relief_field)
-        dem_info = pygeoprocessing.get_raster_info(dem_path)
+        dem_info = geoprocessing.get_raster_info(dem_path)
 
         tmp_working_dir = tempfile.mkdtemp(
             prefix='calculate_relief_',
@@ -1404,7 +1403,7 @@ def calculate_relief(
         positive_dem_path = os.path.join(
             tmp_working_dir, 'positive_dem.tif')
 
-        pygeoprocessing.raster_calculator(
+        geoprocessing.raster_calculator(
             [(dem_path, 1)], zero_negative_values,
             positive_dem_path, gdal.GDT_Int16, dem_nodata)
 
@@ -1420,7 +1419,7 @@ def calculate_relief(
             kernel_radius, kernel_filepath, normalize=True)
 
         relief_path = os.path.join(tmp_working_dir, 'relief.tif')
-        pygeoprocessing.convolve_2d(
+        geoprocessing.convolve_2d(
             (positive_dem_path, 1), (kernel_filepath, 1), relief_path)
         relief_raster = gdal.Open(relief_path)
         relief_band = relief_raster.GetRasterBand(1)
@@ -1503,13 +1502,13 @@ def clip_and_reproject_raster(
         None.
 
     """
-    base_raster_info = pygeoprocessing.get_raster_info(base_raster_path)
+    base_raster_info = geoprocessing.get_raster_info(base_raster_path)
     bb_centroid = (
         (target_bounding_box[0]+target_bounding_box[2])/2,
         (target_bounding_box[1]+target_bounding_box[3])/2)
 
     if reproject_bounding_box:
-        local_bounding_box = pygeoprocessing.transform_bounding_box(
+        local_bounding_box = geoprocessing.transform_bounding_box(
             target_bounding_box, base_raster_info['projection_wkt'],
             target_srs_wkt, edge_samples=11)
     else:
@@ -1533,7 +1532,7 @@ def clip_and_reproject_raster(
 
     # target_pixel_size = estimate_projected_pixel_size(
     #     base_raster_path, bb_centroid, target_srs_wkt)
-    pygeoprocessing.warp_raster(
+    geoprocessing.warp_raster(
         base_raster_path, target_pixel_size, target_raster_path,
         resample_method, target_bb=buffered_bounding_box,
         target_projection_wkt=target_srs_wkt,
@@ -1579,7 +1578,7 @@ def clip_raster(
             'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
             'BLOCKXSIZE=256', 'BLOCKYSIZE=256'],
         outputBounds=buffered_bounding_box,
-        callback=pygeoprocessing._make_logger_callback(
+        callback=geoprocessing._make_logger_callback(
             "Translate %.1f%% complete"))
     base_raster = None
 
@@ -1599,7 +1598,7 @@ def estimate_projected_pixel_size(
         None.
 
     """
-    base_raster_info = pygeoprocessing.get_raster_info(base_raster_path)
+    base_raster_info = geoprocessing.get_raster_info(base_raster_path)
     base_pixel_size = base_raster_info['pixel_size']
     raster_center_pixel_bb = [
         sample_point[0] - abs(base_pixel_size[0]/2),
@@ -1607,7 +1606,7 @@ def estimate_projected_pixel_size(
         sample_point[0] + abs(base_pixel_size[0]/2),
         sample_point[1] + abs(base_pixel_size[1]/2),
     ]
-    pixel_bb = pygeoprocessing.transform_bounding_box(
+    pixel_bb = geoprocessing.transform_bounding_box(
         raster_center_pixel_bb, base_raster_info['projection_wkt'], target_srs_wkt)
     # x goes to the right, y goes down
     estimated_pixel_size = [
@@ -2149,14 +2148,14 @@ def calculate_habitat_value(
         buffer_habitat_vector = None
         value_coverage_raster_path = os.path.join(
             temp_workspace_dir, '%s_value_cover.tif' % habitat_id)
-        pygeoprocessing.new_raster_from_base(
+        geoprocessing.new_raster_from_base(
             template_raster_path, value_coverage_raster_path,
             gdal.GDT_Float32, [0],
             raster_driver_creation_tuple=(
                 'GTIFF', (
                     'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
                     'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
-        pygeoprocessing.rasterize(
+        geoprocessing.rasterize(
             buffer_habitat_path, value_coverage_raster_path,
             option_list=[
                 'ATTRIBUTE=%s' % habitat_service_id,
@@ -2165,16 +2164,16 @@ def calculate_habitat_value(
         habitat_value_raster_path = os.path.join(
             results_dir, '%s_value.tif' % habitat_id)
 
-        value_coverage_nodata = pygeoprocessing.get_raster_info(
+        value_coverage_nodata = geoprocessing.get_raster_info(
             value_coverage_raster_path)['nodata'][0]
-        hab_nodata = pygeoprocessing.get_raster_info(
+        hab_nodata = geoprocessing.get_raster_info(
             hab_raster_path)['nodata'][0]
 
         aligned_value_hab_raster_path_list = align_raster_list(
             [value_coverage_raster_path, hab_raster_path],
             temp_workspace_dir)
 
-        pygeoprocessing.raster_calculator(
+        geoprocessing.raster_calculator(
             [(aligned_value_hab_raster_path_list[0], 1),
              (aligned_value_hab_raster_path_list[1], 1),
              (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
@@ -2263,7 +2262,7 @@ def download_data(**kwargs):
     wgs84_srs.ImportFromEPSG(4326)
     projected_reef_raster_path = os.path.join(CHURN_DIR, 'wgs84_reefs.tif')
     project_reef_task = task_graph.add_task(
-        func=pygeoprocessing.warp_raster,
+        func=geoprocessing.warp_raster,
         args=(
             local_data_path_map['reefs'], reef_degree_pixel_size,
             projected_reef_raster_path, 'near'),
@@ -2305,11 +2304,11 @@ def align_raster_list(raster_path_list, target_directory):
     aligned_path_list = [
         os.path.join(target_directory, os.path.basename(path))
         for path in raster_path_list]
-    target_pixel_size = pygeoprocessing.get_raster_info(
+    target_pixel_size = geoprocessing.get_raster_info(
         raster_path_list[0])['pixel_size']
     LOGGER.debug('about to align: %s', str(raster_path_list))
     task_graph.add_task(
-        func=pygeoprocessing.align_and_resize_raster_stack,
+        func=geoprocessing.align_and_resize_raster_stack,
         args=(
             raster_path_list, aligned_path_list,
             ['near'] * len(raster_path_list), target_pixel_size,
@@ -2326,11 +2325,11 @@ def clean_convolve_2d(
         dir=os.path.dirname(signal_raster_band_path[0]),
         prefix='clean_convolve_2d')
     temp_target_raster = os.path.join(temp_workspace_dir, 'result.tif')
-    pygeoprocessing.convolve_2d(
+    geoprocessing.convolve_2d(
         signal_raster_band_path, kernel_raster_band_path,
         temp_target_raster, working_dir=working_dir)
-    nodata = pygeoprocessing.get_raster_info(temp_target_raster)['nodata'][0]
-    pygeoprocessing.raster_calculator(
+    nodata = geoprocessing.get_raster_info(temp_target_raster)['nodata'][0]
+    geoprocessing.raster_calculator(
         [(temp_target_raster, 1), (1e-6, 'raw')], set_almost_zero_to_zero,
         target_raster_path, gdal.GDT_Float32, nodata)
     try:
@@ -2356,7 +2355,7 @@ def preprocess_habitat():
     lulc_shore_mask_raster_path = os.path.join(
         CHURN_DIR, 'lulc_masked_by_shore.tif')
     mask_lulc_by_shore_task = task_graph.add_task(
-        func=pygeoprocessing.mask_raster,
+        func=geoprocessing.mask_raster,
         args=(
             (local_data_path_map['lulc'], 1),
             local_data_path_map['shore_buffer_vector_path'],
@@ -2392,7 +2391,7 @@ def preprocess_habitat():
             CHURN_DIR, '%s_%s_mask.tif' % risk_distance_tuple)
 
         _ = task_graph.add_task(
-            func=pygeoprocessing.reclassify_raster,
+            func=geoprocessing.reclassify_raster,
             args=(
                 (lulc_shore_mask_raster_path, 1), reclass_map,
                 risk_distance_mask_path, gdal.GDT_Byte, 0),
@@ -2409,10 +2408,10 @@ def preprocess_habitat():
         aligned_raster_path_list = [
             os.path.join(CHURN_DIR, x) for x in [
                 '%s_a.tif' % vector_name, '%s_b.tif' % vector_name]]
-        habitat_raster_info = pygeoprocessing.get_raster_info(
+        habitat_raster_info = geoprocessing.get_raster_info(
             habitat_raster_risk_map[lucode_type_tuple][0])
         align_task = task_graph.add_task(
-            func=pygeoprocessing.align_and_resize_raster_stack,
+            func=geoprocessing.align_and_resize_raster_stack,
             args=(
                 [habitat_raster_risk_map[lucode_type_tuple][0],
                  local_data_path_map[vector_name]],
@@ -2423,12 +2422,12 @@ def preprocess_habitat():
 
         merged_hab_raster_path = os.path.join(
             CHURN_DIR, 'merged_%s.tif' % vector_name)
-        nodata_0 = pygeoprocessing.get_raster_info(
+        nodata_0 = geoprocessing.get_raster_info(
             aligned_raster_path_list[0])['nodata'][0]
-        nodata_1 = pygeoprocessing.get_raster_info(
+        nodata_1 = geoprocessing.get_raster_info(
             aligned_raster_path_list[1])['nodata'][0]
         _ = task_graph.add_task(
-            func=pygeoprocessing.raster_calculator,
+            func=geoprocessing.raster_calculator,
             args=(
                 ((aligned_raster_path_list[0], 1),
                  (aligned_raster_path_list[1], 1),
@@ -2599,14 +2598,14 @@ def make_buffered_point_raster_mask(
     buffer_habitat_layer.CommitTransaction()
     buffer_habitat_layer = None
     buffer_habitat_vector = None
-    pygeoprocessing.new_raster_from_base(
+    geoprocessing.new_raster_from_base(
         template_raster_path, target_buffer_raster_path,
         gdal.GDT_Float32, [0],
         raster_driver_creation_tuple=(
             'GTIFF', (
                 'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
                 'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
-    pygeoprocessing.rasterize(
+    geoprocessing.rasterize(
         buffer_habitat_path, target_buffer_raster_path, burn_values=[1])
 
 
