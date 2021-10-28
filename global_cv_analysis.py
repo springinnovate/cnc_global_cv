@@ -130,7 +130,7 @@ GLOBAL_DATA_URL_MAP = {
     'global_wwiii_vector_path': GLOBAL_WWIII_GZ_URL,
     }
 
-if s:
+if BARRIER_REEFS:
     GLOBAL_DATA_URL_MAP.update({
         'mesoamerican_barrier_reef': GLOBAL_MESOAMERICAN_BARRIER_REEF,
         'new_caledonian_barrier_reef': GLOBAL_NEW_CALEDONIAN_BARRIER_REEF,
