@@ -31,6 +31,7 @@ gdal.SetCacheMax(2**25)
 BARRIER_REEFS = False
 SHORE_POINT_SAMPLE_DISTANCE = 2000.0
 
+
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
@@ -1707,6 +1708,8 @@ def geometry_to_lines(geometry):
 def polygon_to_lines(geometry):
     """Return a list of shapely lines given higher order shapely geometry."""
     line_list = []
+    if len(geometry.exterior.coords) == 0:
+        return line_list
     last_point = geometry.exterior.coords[0]
     for point in geometry.exterior.coords[1::]:
         if point == last_point:
@@ -2500,7 +2503,6 @@ if __name__ == '__main__':
     LOGGER.info(args)
     print(args)
 
-
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
         try:
@@ -2512,7 +2514,7 @@ if __name__ == '__main__':
         GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
         GLOBAL_SALTMARSH_RASTER_URL = EMPTY_RASTER_URL
 
-    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, 0, 5.0)
+    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, -1, 5.0)
 
     try:
         with open(args.landcover_file, 'r') as landcover_raster_file:
@@ -2540,6 +2542,7 @@ if __name__ == '__main__':
                     target_cv_vector_path),
                 target_path_list=[target_cv_vector_path],
                 task_name='calculate CV for %s' % landcover_basename)
+            break
 
             local_lulc_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(landcover_url))
