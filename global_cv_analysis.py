@@ -215,7 +215,8 @@ logging.basicConfig(
     level=logging.DEBUG,
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
-        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'))
+        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'),
+    filename='log.out')
 LOGGER = logging.getLogger(__name__)
 
 STOP_SENTINEL = 'STOP'
@@ -752,6 +753,7 @@ def calculate_wind_and_wave(
         shore_point_vector_path)['projection_wkt']
     shore_point_srs = osr.SpatialReference()
     shore_point_srs.ImportFromWkt(shore_point_projection_wkt)
+    shore_point_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     temp_fetch_rays_layer = (
         temp_fetch_rays_vector.CreateLayer(
             str(layer_name), shore_point_srs, ogr.wkbLineString))
@@ -817,6 +819,7 @@ def calculate_wind_and_wave(
     # make a transfomer for local points to lat/lng for wwiii_rtree
     wgs84_srs = osr.SpatialReference()
     wgs84_srs.ImportFromEPSG(4326)
+    wgs84_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     base_to_target_transform = osr.CoordinateTransformation(
         shore_point_srs, wgs84_srs)
 
@@ -1268,7 +1271,9 @@ def clip_geometry(
         clipped_geom = ogr.CreateGeometryFromWkb(clipped_shapely_geom.wkb)
         error_code = clipped_geom.Transform(base_to_target_transform)
         if error_code:
-            raise RuntimeError(error_code)
+            LOGGER.warning(f'error code {error_code} encountered on {geom}')
+            continue
+            #raise RuntimeError(error_code)
         feature = ogr.Feature(layer_defn)
         feature.SetGeometry(clipped_geom.Clone())
         for field_name, _ in global_geom_strtree.field_name_type_list:
