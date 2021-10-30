@@ -1255,6 +1255,8 @@ def clip_geometry(
     for field_name, field_type in global_geom_strtree.field_name_type_list:
         layer.CreateField(ogr.FieldDefn(field_name, field_type))
     layer_defn = layer.GetLayerDefn()
+    base_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     base_to_target_transform = osr.CoordinateTransformation(
         base_srs, target_srs)
 
@@ -1499,6 +1501,8 @@ def clip_and_reproject_raster(
         base_srs.ImportFromWkt(base_raster_info['projection_wkt'])
         target_srs = osr.SpatialReference()
         target_srs.ImportFromWkt(target_srs_wkt)
+        base_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
         target_to_base_transform = osr.CoordinateTransformation(
             target_srs, base_srs)
         point = ogr.CreateGeometryFromWkt("POINT (%f %f)" % bb_centroid)
@@ -1826,6 +1830,7 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
     layer_name = os.path.basename(os.path.splitext(target_cv_vector_path)[0])
     wgs84_srs = osr.SpatialReference()
     wgs84_srs.ImportFromEPSG(4326)
+    wgs84_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     target_cv_layer = (
         target_cv_vector.CreateLayer(layer_name, wgs84_srs, ogr.wkbPoint))
     fields_to_copy = [
@@ -1852,6 +1857,7 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
         cv_vector = gdal.OpenEx(cv_vector_path, gdal.OF_VECTOR)
         cv_layer = cv_vector.GetLayer()
         cv_projection = cv_layer.GetSpatialRef()
+        cv_projection.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
         base_to_target_transform = osr.CoordinateTransformation(
             cv_projection, wgs84_srs)
 
@@ -2012,6 +2018,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
 
         cv_risk_layer.SetFeature(feature)
     cv_risk_layer.CommitTransaction()
+    cv_risk_layer = None
+    cv_risk_vector = None
 
 
 def mask_by_height_op(pop_array, dem_array, mask_height, pop_nodata):
@@ -2077,6 +2085,7 @@ def calculate_habitat_value(
             buffer_habitat_path)
         wgs84_srs = osr.SpatialReference()
         wgs84_srs.ImportFromEPSG(4326)
+        wgs84_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
         buffer_habitat_layer = (
             buffer_habitat_vector.CreateLayer(
                 habitat_service_id, wgs84_srs, ogr.wkbPolygon))
@@ -2099,6 +2108,7 @@ def calculate_habitat_value(
             if (x_val < -179.8) or (x_val > 179.8):
                 continue
             utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
+            utm_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
             wgs84_to_utm_transform = osr.CoordinateTransformation(
                 wgs84_srs, utm_srs)
             utm_to_wgs84_transform = osr.CoordinateTransformation(
@@ -2168,6 +2178,9 @@ def calculate_habitat_value(
 
     with open(habitat_value_token_path, 'w') as habitat_value_file:
         habitat_value_file.write(str(datetime.datetime.now()))
+
+    shore_sample_point_vector = None
+    shore_sample_point_layer = None
 
 
 def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
@@ -2471,6 +2484,9 @@ def calculate_degree_cell_cv(
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
+
+    shore_grid_vector = None
+    shore_grid_layer = None
 
     bb_work_queue.put(STOP_SENTINEL)
 
