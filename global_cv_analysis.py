@@ -1,14 +1,4 @@
-"""Global CV Analysis for CNC.
-
-Design doc is here:
-
-https://docs.google.com/document/d/18AcJM-rXeIYgEsmqlaUwdtm7gdWLiaD6kkRkpARILlw/edit#heading=h.bbujb61ete53
-
-Notes to Rich to change/simplify:
-- flag to run barrier reefs or no
-- remove population processes, because we have a different code base for that now: https://github.com/therealspring/people_protected_by_coastal_habitat -- these have pop_coverage at the end
-
-"""
+"""Global CV Analysis."""
 import argparse
 import bisect
 import collections
@@ -22,22 +12,24 @@ import shutil
 import tempfile
 import threading
 import zipfile
-import ecoshard
+
+from ecoshard import geoprocessing
+from ecoshard import taskgraph
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
+import ecoshard
 import numpy
-from ecoshard import geoprocessing
 import retrying
 import rtree
 import shapely.geometry
 import shapely.strtree
 import shapely.wkt
-from ecoshard import taskgraph
 
-gdal.SetCacheMax(2**26)
+gdal.SetCacheMax(2**25)
 
 BARRIER_REEFS = False
+SHORE_POINT_SAMPLE_DISTANCE = 2000.0
 
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
@@ -49,9 +41,6 @@ TARGET_NODATA = -1
 TARGET_CV_VECTOR_PATH = os.path.join(
     WORKSPACE_DIR, 'global_cv_analysis_result.gpkg')
 
-# landcover inputs come from this file
-LANDCOVER_RASTER_DATA_FILE = 'GLOBAL_CV_DATA_INPUTS.txt'
-
 # [minx, miny, maxx, maxy].
 GLOBAL_AOI_WGS84_BB = [-179, -65, 180, 77]
 RELIEF_SAMPLE_DISTANCE = 5000.0
@@ -60,7 +49,8 @@ MAX_FETCH_DISTANCE = 60000
 M_PER_DEGREE = 111300.0
 
 ECOSHARD_BUCKET_URL = (
-    r'https://storage.googleapis.com/critical-natural-capital-ecoshards/cv_layers/')
+    'https://storage.googleapis.com/critical-natural-capital-ecoshards/'
+    'cv_layers/')
 
 EMPTY_RASTER_URL = (
     ECOSHARD_BUCKET_URL + 'empty_md5_f8f71e20668060bda7567ca33149a45c.tif')
@@ -224,8 +214,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
-        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'),
-    filename='log.out')
+        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'))
 LOGGER = logging.getLogger(__name__)
 
 STOP_SENTINEL = 'STOP'
@@ -274,19 +263,6 @@ if BARRIER_REEFS:
                     GLOBAL_DATA_URL_MAP['keys_barrier_reef'])),
             1, 25000.0),
         })
-
-
-def download_and_unzip(url, target_dir, target_token_path):
-    """Download `url` to `target_dir` and touch `target_token_path`."""
-    zipfile_path = os.path.join(target_dir, os.path.basename(url))
-    LOGGER.debug('url %s, zipfile_path: %s', url, zipfile_path)
-    ecoshard.download_url(url, zipfile_path)
-
-    with zipfile.ZipFile(zipfile_path, 'r') as zip_ref:
-        zip_ref.extractall(target_dir)
-
-    with open(target_token_path, 'w') as touchfile:
-        touchfile.write(f'unzipped {zipfile_path}')
 
 
 def download_and_ungzip(url, target_path, buffer_size=2**20):
@@ -1607,7 +1583,8 @@ def estimate_projected_pixel_size(
         sample_point[1] + abs(base_pixel_size[1]/2),
     ]
     pixel_bb = geoprocessing.transform_bounding_box(
-        raster_center_pixel_bb, base_raster_info['projection_wkt'], target_srs_wkt)
+        raster_center_pixel_bb, base_raster_info['projection_wkt'],
+        target_srs_wkt)
     # x goes to the right, y goes down
     estimated_pixel_size = [
         pixel_bb[2]-pixel_bb[0],
@@ -1813,6 +1790,7 @@ def compute_wave_period(Un, Fn, dn):
 
 
 def merge_masks_op(mask_a, mask_b, nodata_a, nodata_b, target_nodata):
+    """Logically 'or' two masks together."""
     result = numpy.empty(mask_a.shape, dtype=numpy.int16)
     valid_mask = (~numpy.isclose(mask_a, nodata_a) |
                   ~numpy.isclose(mask_b, nodata_b))
@@ -1886,9 +1864,9 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
 
 
 def add_cv_vector_risk(cv_risk_vector_path):
-    """Use existing biophysical fields in `cv_risk_vector_path to calc total R
+    """Use existing biophysical fields in `cv_risk_vector_path to calc total R.
 
-    Parameters:
+    Args:
         cv_risk_vector_path (str): path to point vector that has at least
             the following fields in it:
 
@@ -1904,11 +1882,9 @@ def add_cv_vector_risk(cv_risk_vector_path):
                 * Rsurge
                 * Rrelief
                 * Rslr
-    Returns:
+    Return:
         None
-
     """
-
     cv_risk_vector = gdal.OpenEx(
         cv_risk_vector_path, gdal.OF_VECTOR | gdal.GA_Update)
     cv_risk_layer = cv_risk_vector.GetLayer()
@@ -2186,18 +2162,6 @@ def calculate_habitat_value(
         habitat_value_file.write(str(datetime.datetime.now()))
 
 
-def intersect_and_mask_raster_op(
-        array_a, array_b, mask_array, nodata_a, nodata_b):
-    result = numpy.empty_like(array_a)
-    result[:] = nodata_a
-    valid_mask = (
-        ~numpy.isclose(array_a, nodata_a) &
-        ~numpy.isclose(array_b, nodata_b) &
-        (mask_array == 1))
-    result[valid_mask] = array_a[valid_mask]
-    return result
-
-
 def intersect_raster_op(array_a, array_b, nodata_a, nodata_b):
     """Only return values from a where a and b are defined."""
     result = numpy.empty_like(array_a)
@@ -2221,6 +2185,7 @@ def download_data(**kwargs):
         artifacts.
 
     """
+    LOGGER.debug('downloading data')
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
 
     local_data_path_map = {}
@@ -2275,7 +2240,7 @@ def download_data(**kwargs):
     task_graph.join()
     task_graph.close()
     del task_graph
-
+    LOGGER.debug('done downloading data')
     return local_data_path_map
 
 
@@ -2315,33 +2280,6 @@ def align_raster_list(raster_path_list, target_directory):
             'intersection'),
         target_path_list=aligned_path_list)
     return aligned_path_list
-
-
-def clean_convolve_2d(
-        signal_raster_band_path, kernel_raster_band_path, target_raster_path,
-        working_dir=None):
-    """Do 2D convolution but mask out any close to 0 values to 0."""
-    temp_workspace_dir = tempfile.mkdtemp(
-        dir=os.path.dirname(signal_raster_band_path[0]),
-        prefix='clean_convolve_2d')
-    temp_target_raster = os.path.join(temp_workspace_dir, 'result.tif')
-    geoprocessing.convolve_2d(
-        signal_raster_band_path, kernel_raster_band_path,
-        temp_target_raster, working_dir=working_dir)
-    nodata = geoprocessing.get_raster_info(temp_target_raster)['nodata'][0]
-    geoprocessing.raster_calculator(
-        [(temp_target_raster, 1), (1e-6, 'raw')], set_almost_zero_to_zero,
-        target_raster_path, gdal.GDT_Float32, nodata)
-    try:
-        shutil.rmtree(temp_workspace_dir)
-    except OSError:
-        LOGGER.exception('unable to remove %s' % temp_workspace_dir)
-
-
-def set_almost_zero_to_zero(array, eps):
-    result = numpy.empty_like(array)
-    result[:] = numpy.where(numpy.abs(array) < eps, 0.0, array)
-    return result
 
 
 def preprocess_habitat():
@@ -2471,6 +2409,7 @@ def calculate_degree_cell_cv(
         habitat_raster_risk_map (dict): maps habitat layers to raster masks,
             indexed by habitat id maps to tuple of
             (raster path, risk val, distance).
+        target_cv_vector_path (str): path to desiered point CV result.
 
     Returns:
         None
@@ -2543,73 +2482,8 @@ def calculate_degree_cell_cv(
     add_cv_vector_risk(target_cv_vector_path)
 
 
-def make_buffered_point_raster_mask(
-        shore_sample_point_vector_path, template_raster_path, workspace_dir,
-        habitat_id,
-        protective_distance, target_buffer_raster_path):
-    gpkg_driver = ogr.GetDriverByName('GPKG')
-    buffer_habitat_path = os.path.join(
-        workspace_dir, '%s_buffer.gpkg' % habitat_id)
-    buffer_habitat_vector = gpkg_driver.CreateDataSource(
-        buffer_habitat_path)
-    wgs84_srs = osr.SpatialReference()
-    wgs84_srs.ImportFromEPSG(4326)
-    buffer_habitat_layer = (
-        buffer_habitat_vector.CreateLayer(
-            habitat_id, wgs84_srs, ogr.wkbPolygon))
-    buffer_habitat_layer_defn = buffer_habitat_layer.GetLayerDefn()
-
-    shore_sample_point_vector = gdal.OpenEx(
-        shore_sample_point_vector_path, gdal.OF_VECTOR)
-    shore_sample_point_layer = shore_sample_point_vector.GetLayer()
-    buffer_habitat_layer.StartTransaction()
-    for point_index, point_feature in enumerate(shore_sample_point_layer):
-        if point_index % 1000 == 0:
-            LOGGER.debug(
-                'point buffering is %.2f%% complete',
-                point_index / shore_sample_point_layer.GetFeatureCount() *
-                100.0)
-        # for each point, convert to local UTM to buffer out a given
-        # distance then back to wgs84
-        point_geom = point_feature.GetGeometryRef()
-        x_val = point_geom.GetX()
-        if (x_val < -179.8) or (x_val > 179.8):
-            continue
-
-        utm_srs = calculate_utm_srs(point_geom.GetX(), point_geom.GetY())
-        wgs84_to_utm_transform = osr.CoordinateTransformation(
-            wgs84_srs, utm_srs)
-        utm_to_wgs84_transform = osr.CoordinateTransformation(
-            utm_srs, wgs84_srs)
-        point_geom.Transform(wgs84_to_utm_transform)
-        buffer_poly_geom = point_geom.Buffer(protective_distance)
-        buffer_poly_geom.Transform(utm_to_wgs84_transform)
-
-        buffer_point_feature = ogr.Feature(buffer_habitat_layer_defn)
-        buffer_point_feature.SetGeometry(buffer_poly_geom)
-        buffer_habitat_layer.CreateFeature(buffer_point_feature)
-        buffer_point_feature = None
-        point_feature = None
-        buffer_poly_geom = None
-        point_geom = None
-
-    # at this point every shore point has been buffered to the effective
-    # habitat distance and the habitat service has been saved with it
-    buffer_habitat_layer.CommitTransaction()
-    buffer_habitat_layer = None
-    buffer_habitat_vector = None
-    geoprocessing.new_raster_from_base(
-        template_raster_path, target_buffer_raster_path,
-        gdal.GDT_Float32, [0],
-        raster_driver_creation_tuple=(
-            'GTIFF', (
-                'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
-                'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
-    geoprocessing.rasterize(
-        buffer_habitat_path, target_buffer_raster_path, burn_values=[1])
-
-
 if __name__ == '__main__':
+    LOGGER.debug('starting')
     parser = argparse.ArgumentParser(description='Global CV analysis')
     parser.add_argument(
         'landcover_file',
@@ -2618,15 +2492,14 @@ if __name__ == '__main__':
         '--n_workers', default=multiprocessing.cpu_count(),
         help='Number of workers.')
     parser.add_argument(
-        '--shore_point_sample_distance', type=float, default=2000.0,
-        help='Distance between shore sample points in meters.')
-    parser.add_argument(
         '--dasgupta_mode', action='store_true',
         help='Ignore offshore mangrove and saltmarsh')
 
+    LOGGER.debug('parsing args')
     args = parser.parse_args()
+    LOGGER.info(args)
+    print(args)
 
-    SHORE_POINT_SAMPLE_DISTANCE = args.shore_point_sample_distance
 
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
