@@ -2563,7 +2563,6 @@ if __name__ == '__main__':
                     target_cv_vector_path),
                 target_path_list=[target_cv_vector_path],
                 task_name='calculate CV for %s' % landcover_basename)
-            break
 
             local_lulc_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(landcover_url))
