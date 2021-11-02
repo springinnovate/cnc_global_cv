@@ -2556,13 +2556,13 @@ if __name__ == '__main__':
             target_cv_vector_path = os.path.join(
                 local_workspace_dir, '%s.gpkg' % landcover_basename)
             habitat_raster_risk_dist_map = preprocess_habitat()
-            #calculate_cv_vector_task = task_graph.add_task(
-            #    func=calculate_degree_cell_cv,
-            #    args=(
-            #        local_data_path_map, habitat_raster_risk_dist_map,
-            #        target_cv_vector_path),
-            #    target_path_list=[target_cv_vector_path],
-            #    task_name='calculate CV for %s' % landcover_basename)
+            calculate_cv_vector_task = task_graph.add_task(
+                func=calculate_degree_cell_cv,
+                args=(
+                    local_data_path_map, habitat_raster_risk_dist_map,
+                    target_cv_vector_path),
+                target_path_list=[target_cv_vector_path],
+                task_name='calculate CV for %s' % landcover_basename)
 
             local_lulc_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(landcover_url))
@@ -2576,9 +2576,9 @@ if __name__ == '__main__':
                     target_cv_vector_path, local_lulc_raster_path,
                     FINAL_HAB_FIELDS, habitat_raster_risk_dist_map,
                     local_habitat_value_dir, habitat_value_token_path),
-                #dependent_task_list=[calculate_cv_vector_task],
-                #target_path_list=[habitat_value_token_path],
-                transient_run=True,
+                dependent_task_list=[calculate_cv_vector_task],
+                target_path_list=[habitat_value_token_path],
+                #transient_run=True,
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
 
