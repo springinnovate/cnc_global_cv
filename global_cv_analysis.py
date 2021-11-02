@@ -2142,13 +2142,15 @@ def calculate_habitat_value(
         buffer_habitat_vector = None
         value_coverage_raster_path = os.path.join(
             temp_workspace_dir, '%s_value_cover.tif' % habitat_id)
+        LOGGER.info(f'create new value cover: {value_coverage_raster_path}')
         geoprocessing.new_raster_from_base(
             template_raster_path, value_coverage_raster_path,
             gdal.GDT_Float32, [0],
             raster_driver_creation_tuple=(
                 'GTIFF', (
                     'TILED=YES', 'BIGTIFF=YES', 'COMPRESS=LZW',
-                    'BLOCKXSIZE=256', 'BLOCKYSIZE=256', 'SPARSE_OK=TRUE')))
+                    'BLOCKXSIZE=256', 'BLOCKYSIZE=256',)))
+        LOGGER.info(f'rasterizing {buffer_habitat_path} onto {value_coverage_raster_path} with attribute id {habitat_service_id}')
         geoprocessing.rasterize(
             buffer_habitat_path, value_coverage_raster_path,
             option_list=[
@@ -2173,8 +2175,6 @@ def calculate_habitat_value(
              (value_coverage_nodata, 'raw'), (hab_nodata, 'raw')],
             intersect_raster_op, habitat_value_raster_path, gdal.GDT_Float32,
             value_coverage_nodata)
-
-        ecoshard.build_overviews(habitat_value_raster_path)
 
     with open(habitat_value_token_path, 'w') as habitat_value_file:
         habitat_value_file.write(str(datetime.datetime.now()))
@@ -2288,7 +2288,7 @@ def align_raster_list(raster_path_list, target_directory):
             taskgraph.TaskGraph(target_directory, -1))
     task_graph = align_raster_list.task_graph_map[target_directory]
     aligned_path_list = [
-        os.path.join(target_directory, os.path.basename(path))
+        os.path.join(target_directory, f'aligned_{os.path.basename(path)}')
         for path in raster_path_list]
     target_pixel_size = geoprocessing.get_raster_info(
         raster_path_list[0])['pixel_size']
@@ -2535,7 +2535,7 @@ if __name__ == '__main__':
         GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
         GLOBAL_SALTMARSH_RASTER_URL = EMPTY_RASTER_URL
 
-    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, -1, 5.0)
+    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, 2, 5.0)
 
     try:
         with open(args.landcover_file, 'r') as landcover_raster_file:
@@ -2556,13 +2556,13 @@ if __name__ == '__main__':
             target_cv_vector_path = os.path.join(
                 local_workspace_dir, '%s.gpkg' % landcover_basename)
             habitat_raster_risk_dist_map = preprocess_habitat()
-            calculate_cv_vector_task = task_graph.add_task(
-                func=calculate_degree_cell_cv,
-                args=(
-                    local_data_path_map, habitat_raster_risk_dist_map,
-                    target_cv_vector_path),
-                target_path_list=[target_cv_vector_path],
-                task_name='calculate CV for %s' % landcover_basename)
+            #calculate_cv_vector_task = task_graph.add_task(
+            #    func=calculate_degree_cell_cv,
+            #    args=(
+            #        local_data_path_map, habitat_raster_risk_dist_map,
+            #        target_cv_vector_path),
+            #    target_path_list=[target_cv_vector_path],
+            #    task_name='calculate CV for %s' % landcover_basename)
 
             local_lulc_raster_path = os.path.join(
                 ECOSHARD_DIR, os.path.basename(landcover_url))
@@ -2576,8 +2576,9 @@ if __name__ == '__main__':
                     target_cv_vector_path, local_lulc_raster_path,
                     FINAL_HAB_FIELDS, habitat_raster_risk_dist_map,
                     local_habitat_value_dir, habitat_value_token_path),
-                dependent_task_list=[calculate_cv_vector_task],
-                target_path_list=[habitat_value_token_path],
+                #dependent_task_list=[calculate_cv_vector_task],
+                #target_path_list=[habitat_value_token_path],
+                transient_run=True,
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
 
