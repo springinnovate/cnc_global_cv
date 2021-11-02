@@ -2451,7 +2451,7 @@ def calculate_degree_cell_cv(
     cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_list = []
-    for worker_id in range(int(args.n_workers)):
+    for worker_id in range(int(multiprocessing.cpu_count())):
         cv_grid_worker_thread = multiprocessing.Process(
             target=cv_grid_worker,
             args=(
