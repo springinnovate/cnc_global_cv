@@ -2513,9 +2513,6 @@ if __name__ == '__main__':
         'landcover_file',
         help='Path to file that lists landcover scenarios to run.')
     parser.add_argument(
-        '--n_workers', default=multiprocessing.cpu_count(),
-        help='Number of workers.')
-    parser.add_argument(
         '--dasgupta_mode', action='store_true',
         help='Ignore offshore mangrove and saltmarsh')
 
