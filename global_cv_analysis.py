@@ -13,8 +13,14 @@ import tempfile
 import threading
 import zipfile
 
-from ecoshard import geoprocessing
-from ecoshard import taskgraph
+try:
+    from ecoshard import geoprocessing
+else:
+    import pygeoprocessing as geoprocessing
+try:
+    from ecoshard import taskgraph
+else:
+    import taskgraph
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
