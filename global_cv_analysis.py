@@ -13,14 +13,8 @@ import tempfile
 import threading
 import zipfile
 
-try:
-    from ecoshard import geoprocessing
-else:
-    import pygeoprocessing as geoprocessing
-try:
-    from ecoshard import taskgraph
-else:
-    import taskgraph
+from ecoshard import geoprocessing
+from ecoshard import taskgraph
 from osgeo import gdal
 from osgeo import ogr
 from osgeo import osr
@@ -225,8 +219,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
-        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'),
-    filename='log.out')
+        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'))
 LOGGER = logging.getLogger(__name__)
 
 STOP_SENTINEL = 'STOP'
