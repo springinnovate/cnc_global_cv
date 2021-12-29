@@ -2547,8 +2547,9 @@ if __name__ == '__main__':
                 os.path.basename(landcover_url))[0]
             local_workspace_dir = os.path.join(
                 WORKSPACE_DIR, landcover_basename)
-            landcover_hash = hashlib.sha256().update(
-                landcover_basename.encode('utf-8')).hexdigest()[0:3]
+            hash_obj = hashlib.sha256()
+            hash_obj.update(landcover_basename.encode('utf-8'))
+            landcover_hash = hash_obj.hexdigest()[0:3]
             local_habitat_value_dir = os.path.join(
                 WORKSPACE_DIR, landcover_hash, 'value_rasters')
             for dir_path in [local_workspace_dir, local_habitat_value_dir]:
