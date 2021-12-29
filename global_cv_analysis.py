@@ -4,6 +4,7 @@ import bisect
 import collections
 import datetime
 import gzip
+import hashlib
 import logging
 import math
 import multiprocessing
@@ -32,11 +33,10 @@ SHORE_POINT_SAMPLE_DISTANCE = 2000.0
 
 
 WORKSPACE_DIR = 'global_cv_workspace'
-CHURN_DIR = os.path.join(WORKSPACE_DIR, 'churn')
-ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
-GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'grid_workspaces')
-ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'ecoshard')
-HABITAT_VALUE_DIR = os.path.join(WORKSPACE_DIR, 'habitat_value')
+CHURN_DIR = os.path.join(WORKSPACE_DIR, 'cn')
+ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'es')
+GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'gw')
+HABITAT_VALUE_DIR = os.path.join(WORKSPACE_DIR, 'hv')
 TARGET_NODATA = -1
 TARGET_CV_VECTOR_PATH = os.path.join(
     WORKSPACE_DIR, 'global_cv_analysis_result.gpkg')
@@ -2065,7 +2065,7 @@ def calculate_habitat_value(
         None.
 
     """
-    temp_workspace_dir = os.path.join(results_dir, 'hab_value_churn')
+    temp_workspace_dir = os.path.join(results_dir, 'hvc')
     for dir_path in [results_dir, temp_workspace_dir]:
         try:
             os.makedirs(dir_path)
@@ -2547,8 +2547,10 @@ if __name__ == '__main__':
                 os.path.basename(landcover_url))[0]
             local_workspace_dir = os.path.join(
                 WORKSPACE_DIR, landcover_basename)
+            landcover_hash = hashlib.sha256().update(
+                landcover_basename).hexdigest()[0:3]
             local_habitat_value_dir = os.path.join(
-                WORKSPACE_DIR, landcover_basename, 'value_rasters')
+                WORKSPACE_DIR, landcover_hash, 'value_rasters')
             for dir_path in [local_workspace_dir, local_habitat_value_dir]:
                 os.makedirs(dir_path, exist_ok=True)
             target_cv_vector_path = os.path.join(
