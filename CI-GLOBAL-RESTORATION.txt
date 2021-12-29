@@ -1,2 +1,5 @@
 https://storage.googleapis.com/ecoshard-root/ci_global_restoration/ESACCI-LC-L4-LCCS-Map-300m-P1Y-2020_modVCFTree1km_md5_1cef3d5ad126b8bb34deb19d9ffc7d46.tif
-https://storage.googleapis.com/ecoshard-root/ci_global_restoration/Sc2_Griscom_CookPatton_smithpnv_md5_1536327d82e292529e7872dc6ecc2871.tif
+https://storage.googleapis.com/ecoshard-root/ci_global_restoration/Sc2v3_Griscom_CookPatton2050_smithpnv_md5_82c2f863d49f5a25c0b857865bfdb4b0.tif
+https://storage.googleapis.com/ecoshard-root/ci_global_restoration/Sc2v4_Griscom_CookPatton2035_smithpnv_md5_ffde2403583e30d7df4d16a0687d71fe.tif
+https://storage.googleapis.com/ecoshard-root/ci_global_restoration/Sc1v3_restoration_pnv0.5_on_ESA2020mVCF_md5_403f35b2a8b9b917090703e291f6bc0c.tif
+https://storage.googleapis.com/ecoshard-root/ci_global_restoration/Sc1v4_restoration_pnv0.001_on_ESA2020mVCF_md5_61a44df722532a84a77598fe2a24d46c.tif

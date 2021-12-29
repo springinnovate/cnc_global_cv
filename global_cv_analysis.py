@@ -11,7 +11,6 @@ import os
 import shutil
 import tempfile
 import threading
-import zipfile
 
 from ecoshard import geoprocessing
 from ecoshard import taskgraph
@@ -219,7 +218,8 @@ logging.basicConfig(
     level=logging.DEBUG,
     format=(
         '%(asctime)s (%(relativeCreated)d) %(levelname)s %(name)s'
-        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'))
+        ' [%(pathname)s.%(funcName)s:%(lineno)d] %(message)s'),
+    filename='globalcvlog.txt')
 LOGGER = logging.getLogger(__name__)
 
 STOP_SENTINEL = 'STOP'
@@ -2302,7 +2302,8 @@ def align_raster_list(raster_path_list, target_directory):
             raster_path_list, aligned_path_list,
             ['near'] * len(raster_path_list), target_pixel_size,
             'intersection'),
-        target_path_list=aligned_path_list)
+        target_path_list=aligned_path_list,
+        task_name=f'align raster list for {raster_path_list}')
     return aligned_path_list
 
 
@@ -2455,7 +2456,7 @@ def calculate_degree_cell_cv(
 
     cv_grid_worker_list = []
     for worker_id in range(int(multiprocessing.cpu_count())):
-        cv_grid_worker_thread = multiprocessing.Process(
+        cv_grid_worker_thread = threading.Thread(
             target=cv_grid_worker,
             args=(
                 bb_work_queue,
@@ -2535,7 +2536,7 @@ if __name__ == '__main__':
         GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
         GLOBAL_SALTMARSH_RASTER_URL = EMPTY_RASTER_URL
 
-    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, 2, 5.0)
+    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, -1, 5.0)
 
     try:
         with open(args.landcover_file, 'r') as landcover_raster_file:
@@ -2549,10 +2550,7 @@ if __name__ == '__main__':
             local_habitat_value_dir = os.path.join(
                 WORKSPACE_DIR, landcover_basename, 'value_rasters')
             for dir_path in [local_workspace_dir, local_habitat_value_dir]:
-                try:
-                    os.makedirs(dir_path)
-                except OSError:
-                    pass
+                os.makedirs(dir_path, exist_ok=True)
             target_cv_vector_path = os.path.join(
                 local_workspace_dir, '%s.gpkg' % landcover_basename)
             habitat_raster_risk_dist_map = preprocess_habitat()
@@ -2581,6 +2579,7 @@ if __name__ == '__main__':
                 #transient_run=True,
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
+            task_graph.join()  # wait for run to complete so it won't clash
 
     except Exception:
         LOGGER.exception('error in main')
