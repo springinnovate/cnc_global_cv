@@ -2522,7 +2522,7 @@ if __name__ == '__main__':
     LOGGER.debug('starting')
     parser = argparse.ArgumentParser(description='Global CV analysis')
     parser.add_argument(
-        'landcover_file',
+        'landcover_list_file',
         help='Path to file that lists landcover scenarios to run.')
     parser.add_argument(
         '--dasgupta_mode', action='store_true',
@@ -2545,7 +2545,7 @@ if __name__ == '__main__':
         GLOBAL_SALTMARSH_RASTER_URL = EMPTY_RASTER_URL
 
     try:
-        with open(args.landcover_file, 'r') as landcover_raster_file:
+        with open(args.landcover_list_file, 'r') as landcover_raster_file:
             landcover_url_list = landcover_raster_file.read().splitlines()
         task_graph = taskgraph.TaskGraph(
             WORKSPACE_DIR,
