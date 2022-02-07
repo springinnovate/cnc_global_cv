@@ -29,14 +29,12 @@ import shapely.wkt
 gdal.SetCacheMax(2**25)
 
 BARRIER_REEFS = False
-SHORE_POINT_SAMPLE_DISTANCE = 2000.0
+SHORE_POINT_SAMPLE_DISTANCE = 500.0
 
 
 WORKSPACE_DIR = 'global_cv_workspace'
 CHURN_DIR = os.path.join(WORKSPACE_DIR, 'cn')
 ECOSHARD_DIR = os.path.join(WORKSPACE_DIR, 'es')
-GRID_WORKSPACE_DIR = os.path.join(WORKSPACE_DIR, 'gw')
-HABITAT_VALUE_DIR = os.path.join(WORKSPACE_DIR, 'hv')
 TARGET_NODATA = -1
 TARGET_CV_VECTOR_PATH = os.path.join(
     WORKSPACE_DIR, 'global_cv_analysis_result.gpkg')
@@ -382,6 +380,7 @@ def cv_grid_worker(
         global_dem_raster_path,
         wwiii_vector_path,
         habitat_raster_path_map,
+        grid_workspace_dir,
         ):
     """Worker process to calculate CV for a grid.
 
@@ -404,6 +403,7 @@ def cv_grid_worker(
         habitat_raster_path_map (dict): mapt a habitat id to a
             (raster path, risk, dist(m)) tuple. These are the raster versions
             of habitats to use in Rhab.
+        grid_workspace_dir (str): path to workspace to use to handle grid
 
     Returns:
         None.
@@ -442,7 +442,7 @@ def cv_grid_worker(
             lng_min-0.1, lat_min-0.1, lng_max+0.1, lat_max+0.1]
         # create workspace
         workspace_dir = os.path.join(
-            GRID_WORKSPACE_DIR, '%d_%s_%s_%s_%s' % (
+            grid_workspace_dir, '%d_%s_%s_%s_%s' % (
                 index, lng_min, lat_min, lng_max, lat_max))
 
         try:
@@ -1830,6 +1830,7 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
     """
     gpkg_driver = ogr.GetDriverByName('GPKG')
     target_cv_vector = gpkg_driver.CreateDataSource(target_cv_vector_path)
+    LOGGER.debug(f'****** creating target CV vector at {target_cv_vector_path}')
     layer_name = os.path.basename(os.path.splitext(target_cv_vector_path)[0])
     wgs84_srs = osr.SpatialReference()
     wgs84_srs.ImportFromEPSG(4326)
@@ -2425,7 +2426,8 @@ def preprocess_habitat():
 
 
 def calculate_degree_cell_cv(
-        local_data_path_map, habitat_raster_risk_map, target_cv_vector_path):
+        local_data_path_map, habitat_raster_risk_map, target_cv_vector_path,
+        local_workspace_dir):
     """Process all global degree grids to calculate local hab risk.
 
     Paramters:
@@ -2435,13 +2437,14 @@ def calculate_degree_cell_cv(
             indexed by habitat id maps to tuple of
             (raster path, risk val, distance).
         target_cv_vector_path (str): path to desiered point CV result.
+        local_workspace_dir (str): directory to write local grid workspaces
 
     Returns:
         None
 
     """
     for dir_path in [
-            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
+            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR]:
         try:
             os.makedirs(dir_path)
         except OSError:
@@ -2455,8 +2458,9 @@ def calculate_degree_cell_cv(
     cv_point_complete_queue = multiprocessing.Queue()
 
     cv_grid_worker_list = []
+    grid_workspace_dir = os.path.join(local_workspace_dir, 'grid_workspaces')
     for worker_id in range(int(multiprocessing.cpu_count())):
-        cv_grid_worker_thread = threading.Thread(
+        cv_grid_worker_thread = multiprocessing.Process(
             target=cv_grid_worker,
             args=(
                 bb_work_queue,
@@ -2467,6 +2471,7 @@ def calculate_degree_cell_cv(
                 local_data_path_map['dem'],
                 local_data_path_map['global_wwiii_vector_path'],
                 habitat_raster_risk_map,
+                grid_workspace_dir
                 ))
         cv_grid_worker_thread.start()
         cv_grid_worker_list.append(cv_grid_worker_thread)
@@ -2484,6 +2489,9 @@ def calculate_degree_cell_cv(
     shore_grid_layer = shore_grid_vector.GetLayer()
 
     for index, shore_grid_feature in enumerate(shore_grid_layer):
+        LOGGER.debug('DEBUGGING, ONLY LOOK AT 2180')
+        if shore_grid_feature.GetFID() != 2180:
+            continue
         shore_grid_geom = shore_grid_feature.GetGeometryRef()
         boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
         LOGGER.debug(boundary_box.bounds)
@@ -2526,7 +2534,7 @@ if __name__ == '__main__':
     print(args)
 
     for dir_path in [
-            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR, GRID_WORKSPACE_DIR]:
+            WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR]:
         try:
             os.makedirs(dir_path)
         except OSError:
@@ -2536,20 +2544,22 @@ if __name__ == '__main__':
         GLOBAL_MANGROVES_RASTER_URL = EMPTY_RASTER_URL
         GLOBAL_SALTMARSH_RASTER_URL = EMPTY_RASTER_URL
 
-    task_graph = taskgraph.TaskGraph(WORKSPACE_DIR, -1, 5.0)
-
     try:
         with open(args.landcover_file, 'r') as landcover_raster_file:
             landcover_url_list = landcover_raster_file.read().splitlines()
+        task_graph = taskgraph.TaskGraph(
+            WORKSPACE_DIR,
+            min(len(landcover_url_list), multiprocessing.cpu_count()), 5.0)
         for landcover_url in landcover_url_list:
             local_data_path_map = download_data(lulc=landcover_url)
             landcover_basename = os.path.splitext(
                 os.path.basename(landcover_url))[0]
-            local_workspace_dir = os.path.join(
-                WORKSPACE_DIR, landcover_basename)
             hash_obj = hashlib.sha256()
             hash_obj.update(landcover_basename.encode('utf-8'))
             landcover_hash = hash_obj.hexdigest()[0:3]
+            local_workspace_dir = os.path.join(WORKSPACE_DIR, landcover_hash)
+            with open('hashtrans.txt', 'a') as hash_file:
+                hash_file.write(f'{landcover_basename} -> {landcover_hash}\n')
             local_habitat_value_dir = os.path.join(
                 WORKSPACE_DIR, landcover_hash, 'value_rasters')
             for dir_path in [local_workspace_dir, local_habitat_value_dir]:
@@ -2561,7 +2571,7 @@ if __name__ == '__main__':
                 func=calculate_degree_cell_cv,
                 args=(
                     local_data_path_map, habitat_raster_risk_dist_map,
-                    target_cv_vector_path),
+                    target_cv_vector_path, local_workspace_dir),
                 target_path_list=[target_cv_vector_path],
                 task_name='calculate CV for %s' % landcover_basename)
 
@@ -2582,8 +2592,7 @@ if __name__ == '__main__':
                 #transient_run=True,
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
-            task_graph.join()  # wait for run to complete so it won't clash
-
+            break
     except Exception:
         LOGGER.exception('error in main')
 
