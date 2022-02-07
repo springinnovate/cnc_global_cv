@@ -312,7 +312,8 @@ def build_rtree(vector_path):
     LOGGER.debug('loop through features for rtree')
     for index, feature in enumerate(layer):
         feature_geom = feature.GetGeometryRef().Clone()
-        feature_geom_shapely = shapely.wkb.loads(feature_geom.ExportToWkb())
+        feature_geom_shapely = shapely.wkb.loads(
+            bytes(feature_geom.ExportToWkb()))
         field_val_map = {}
         for field_name, _ in field_name_type_list:
             field_val_map[field_name] = (
@@ -355,7 +356,8 @@ def build_strtree(vector_path):
     LOGGER.debug('loop through features for rtree')
     for index, feature in enumerate(layer):
         feature_geom = feature.GetGeometryRef().Clone()
-        feature_geom_shapely = shapely.wkb.loads(feature_geom.ExportToWkb())
+        feature_geom_shapely = shapely.wkb.loads(
+            bytes(feature_geom.ExportToWkb()))
         feature_geom_shapely.prep = shapely.prepared.prep(feature_geom_shapely)
         feature_geom_shapely.geom = feature_geom
         feature_geom_shapely.id = index
@@ -577,7 +579,7 @@ def calculate_geomorphology(
     shore_point_layer.StartTransaction()
     for shore_point_feature in shore_point_layer:
         shore_point_geom = shapely.wkb.loads(
-            shore_point_feature.GetGeometryRef().ExportToWkb())
+            bytes(shore_point_feature.GetGeometryRef().ExportToWkb()))
         min_dist = MAX_FETCH_DISTANCE
         geo_risk = 5
         for line in geomorphology_strtree.query(shore_point_geom.buffer(500)):
@@ -697,7 +699,7 @@ def calculate_surge(
     shore_point_layer.StartTransaction()
     for point_feature in shore_point_layer:
         point_geometry = point_feature.GetGeometryRef()
-        point_shapely = shapely.wkb.loads(point_geometry.ExportToWkb())
+        point_shapely = shapely.wkb.loads(bytes(point_geometry.ExportToWkb()))
         nearest_point = list(shelf_rtree.nearest(
                 (point_geometry.GetX(),
                  point_geometry.GetY(),
@@ -795,7 +797,7 @@ def calculate_wind_and_wave(
     landmass_vector = gdal.OpenEx(landmass_vector_path, gdal.OF_VECTOR)
     landmass_layer = landmass_vector.GetLayer()
     landmass_geom_list = [
-        shapely.wkb.loads(f.GetGeometryRef().ExportToWkb())
+        shapely.wkb.loads(bytes(f.GetGeometryRef().ExportToWkb()))
         for f in landmass_layer]
     landmass_union_geom = shapely.ops.cascaded_union(landmass_geom_list)
     landmass_layer = None
@@ -806,7 +808,7 @@ def calculate_wind_and_wave(
         landmass_boundary_vector_path, gdal.OF_VECTOR)
     landmass_boundary_layer = landmass_boundary_vector.GetLayer()
     landmass_boundary_geom_list = [
-        shapely.wkb.loads(f.GetGeometryRef().ExportToWkb())
+        shapely.wkb.loads(bytes(f.GetGeometryRef().ExportToWkb()))
         for f in landmass_boundary_layer]
     landmass_boundary_union_geom = shapely.ops.cascaded_union(
         landmass_boundary_geom_list)
@@ -840,7 +842,7 @@ def calculate_wind_and_wave(
 
         shore_point_geometry = shore_point_feature.GetGeometryRef()
         shapely_point = shapely.wkb.loads(
-            shore_point_geometry.ExportToWkb())
+            bytes(shore_point_geometry.ExportToWkb()))
         if landmass_union_geom_prep.contains(shapely_point):
             new_point = shapely.ops.nearest_points(
                 landmass_boundary_union_geom, shapely_point)[0]
@@ -936,7 +938,8 @@ def calculate_wind_and_wave(
                 ray_step_loc = 0.0
                 bathy_values = []
                 # walk along ray
-                ray_shapely = shapely.wkb.loads(ray_geometry.ExportToWkb())
+                ray_shapely = shapely.wkb.loads(
+                    bytes(ray_geometry.ExportToWkb()))
                 while ray_step_loc < ray_shapely.length:
                     sample_point = ray_shapely.interpolate(ray_step_loc)
                     ray_step_loc += SHORE_POINT_SAMPLE_DISTANCE/4
@@ -1318,7 +1321,7 @@ def sample_line_to_points(
     for feature in line_layer:
         current_distance = 0.0
         line_geom = feature.GetGeometryRef()
-        line = shapely.wkb.loads(line_geom.ExportToWkb())
+        line = shapely.wkb.loads(bytes(line_geom.ExportToWkb()))
         if isinstance(line, shapely.geometry.collection.GeometryCollection):
             line_list = []
             for geom in list(line):
@@ -1689,7 +1692,7 @@ def vector_to_lines(base_vector_path, target_line_vector_path):
     line_layer.StartTransaction()
     for base_feature in base_layer:
         base_shapely = shapely.wkb.loads(
-            base_feature.GetGeometryRef().ExportToWkb())
+            bytes(base_feature.GetGeometryRef().ExportToWkb()))
         for line in geometry_to_lines(base_shapely):
             segment_feature = ogr.Feature(line_vector_defn)
             segement_geometry = ogr.Geometry(ogr.wkbLineString)
