@@ -2489,11 +2489,9 @@ def calculate_degree_cell_cv(
     shore_grid_layer = shore_grid_vector.GetLayer()
 
     for index, shore_grid_feature in enumerate(shore_grid_layer):
-        LOGGER.debug('DEBUGGING, ONLY LOOK AT 2180')
-        if shore_grid_feature.GetFID() != 2180:
-            continue
         shore_grid_geom = shore_grid_feature.GetGeometryRef()
-        boundary_box = shapely.wkb.loads(shore_grid_geom.ExportToWkb())
+        boundary_box = shapely.wkb.loads(
+            bytes(shore_grid_geom.ExportToWkb()))
         LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
 
