@@ -27,5 +27,5 @@ if __name__ == '__main__':
         print(gpkg_pattern)
         gpkg_path = next(iter(glob.glob(gpkg_pattern)))
         target_gpkg_path = os.path.join(
-            results_dir, f'{root_name}_point_risk.gpkg')
+            results_dir, f'{basename}_point_risk.gpkg')
         shutil.copy(gpkg_path, target_gpkg_path)
