@@ -2301,16 +2301,20 @@ def align_raster_list(raster_path_list, target_directory):
     return aligned_path_list
 
 
-def preprocess_habitat():
+def preprocess_habitat(churn_subdirectory):
     """Merge and filter all the habitat layers.
+
+    Args:
+        churn_subdirectory (str): subdir to put results into
 
     Returns:
         dictionary of habitat id to (raster path, risk, dist) tuples.
 
     """
     task_graph = taskgraph.TaskGraph(CHURN_DIR, -1)
+    hab_churn_dir = os.path.join(CHURN_DIR, churn_subdirectory)
     lulc_shore_mask_raster_path = os.path.join(
-        CHURN_DIR, 'lulc_masked_by_shore.tif')
+        hab_churn_dir, 'lulc_masked_by_shore.tif')
     mask_lulc_by_shore_task = task_graph.add_task(
         func=geoprocessing.mask_raster,
         args=(
@@ -2345,7 +2349,7 @@ def preprocess_habitat():
                 reclass_map[lulc_code] = 0
 
         risk_distance_mask_path = os.path.join(
-            CHURN_DIR, '%s_%s_mask.tif' % risk_distance_tuple)
+            hab_churn_dir, '%s_%s_mask.tif' % risk_distance_tuple)
 
         _ = task_graph.add_task(
             func=geoprocessing.reclassify_raster,
@@ -2363,7 +2367,7 @@ def preprocess_habitat():
             ('mangroves_forest', (1, 2000)),
             ('saltmarsh_wetland', (2, 1000))]:
         aligned_raster_path_list = [
-            os.path.join(CHURN_DIR, x) for x in [
+            os.path.join(hab_churn_dir, x) for x in [
                 '%s_a.tif' % vector_name, '%s_b.tif' % vector_name]]
         habitat_raster_info = geoprocessing.get_raster_info(
             habitat_raster_risk_map[lucode_type_tuple][0])
@@ -2378,7 +2382,7 @@ def preprocess_habitat():
             task_name='align %s' % vector_name)
 
         merged_hab_raster_path = os.path.join(
-            CHURN_DIR, 'merged_%s.tif' % vector_name)
+            hab_churn_dir, 'merged_%s.tif' % vector_name)
         nodata_0 = geoprocessing.get_raster_info(
             aligned_raster_path_list[0])['nodata'][0]
         nodata_1 = geoprocessing.get_raster_info(
@@ -2549,7 +2553,7 @@ if __name__ == '__main__':
                 os.makedirs(dir_path, exist_ok=True)
             target_cv_vector_path = os.path.join(
                 local_workspace_dir, '%s.gpkg' % landcover_basename)
-            habitat_raster_risk_dist_map = preprocess_habitat()
+            habitat_raster_risk_dist_map = preprocess_habitat(landcover_hash)
             calculate_cv_vector_task = task_graph.add_task(
                 func=calculate_degree_cell_cv,
                 args=(
