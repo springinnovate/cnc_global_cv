@@ -12,9 +12,7 @@ if __name__ == '__main__':
     for hashline in hashes:
         root_name, short_hash = hashline.split(' -> ')
         print(root_name)
-        print(short_hash)
         basename = root_name.split('_md5')[0]
-        print(basename)
 
         value_rasters = list(glob.glob(os.path.join(
             'global_cv_workspace', short_hash, 'value_rasters', '*.tif')))
@@ -24,8 +22,10 @@ if __name__ == '__main__':
                 arcname = f'{basename}_{os.path.basename(value_raster)}'
                 myzip.write(value_raster, arcname=arcname)
 
-        gpkg_path = next(iter(glob.glob(
-            os.path.join('global_cv_workspace', short_hash, '*.gpkg'))))
+        gpkg_pattern = os.path.join(
+            'global_cv_workspace', short_hash, '*.gpkg')
+        print(gpkg_pattern)
+        gpkg_path = next(iter(glob.glob(gpkg_pattern)))
         target_gpkg_path = os.path.join(
             results_dir, f'{root_name}_point_risk.gpkg')
         shutil.copy(gpkg_path, target_gpkg_path)
