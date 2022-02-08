@@ -2532,6 +2532,8 @@ if __name__ == '__main__':
             WORKSPACE_DIR,
             min(len(landcover_url_list), multiprocessing.cpu_count()), 5.0)
         for landcover_url in landcover_url_list:
+            if landcover_url.startswith('#'):
+                continue
             local_data_path_map = download_data(lulc=landcover_url)
             landcover_basename = os.path.splitext(
                 os.path.basename(landcover_url))[0]
@@ -2573,7 +2575,6 @@ if __name__ == '__main__':
                 #transient_run=True,
                 task_name=(
                     'calculate habitat value for %s' % landcover_basename))
-            break
     except Exception:
         LOGGER.exception('error in main')
 
