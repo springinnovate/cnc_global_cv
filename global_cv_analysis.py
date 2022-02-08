@@ -799,7 +799,11 @@ def calculate_wind_and_wave(
     landmass_geom_list = [
         shapely.wkb.loads(bytes(f.GetGeometryRef().ExportToWkb()))
         for f in landmass_layer]
-    landmass_union_geom = shapely.ops.cascaded_union(landmass_geom_list)
+    if landmass_geom_list:
+        landmass_union_geom = shapely.ops.cascaded_union(landmass_geom_list)
+    else:
+        landmass_union_geom = shapely.Polygon()
+
     landmass_layer = None
     landmass_vector = None
     landmass_union_geom_prep = shapely.prepared.prep(landmass_union_geom)
@@ -810,8 +814,11 @@ def calculate_wind_and_wave(
     landmass_boundary_geom_list = [
         shapely.wkb.loads(bytes(f.GetGeometryRef().ExportToWkb()))
         for f in landmass_boundary_layer]
-    landmass_boundary_union_geom = shapely.ops.cascaded_union(
-        landmass_boundary_geom_list)
+    if landmass_boundary_geom_list:
+        landmass_boundary_union_geom = shapely.ops.cascaded_union(
+            landmass_boundary_geom_list)
+    else:
+        landmass_boundary_union_geom = shapely.Polygon()
     landmass_boundary_layer = None
     landmass_boundary_vector = None
     landmass_boundary_union_geom_prep = shapely.prepared.prep(
