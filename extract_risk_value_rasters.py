@@ -16,16 +16,16 @@ if __name__ == '__main__':
         basename = root_name.split('_md5')[0]
         print(basename)
 
-        value_rasters = list(glob.glob(os.join(
+        value_rasters = list(glob.glob(os.path.join(
             'global_cv_workspace', short_hash, 'value_rasters', '*.tif')))
-        zip_path = os.join(f'{basename}_value_rasters.zip')
+        zip_path = os.path.join(f'{basename}_value_rasters.zip')
         with zipfile.ZipFile(zip_path, 'w') as myzip:
             for value_raster in value_rasters:
                 arcname = f'{basename}_{os.path.basename(value_raster)}'
                 myzip.write(value_raster, arcname=arcname)
 
         gpkg_path = next(iter(glob.glob(
-            os.join('global_cv_workspace', short_hash, '*.gpkg'))))
-        target_gpkg_path = os.join(
+            os.path.join('global_cv_workspace', short_hash, '*.gpkg'))))
+        target_gpkg_path = os.path.join(
             results_dir, f'{root_name}_point_risk.gpkg')
         shutil.copy(gpkg_path, target_gpkg_path)
