@@ -853,8 +853,6 @@ def calculate_wind_and_wave(
         if landmass_union_geom_prep.contains(shapely_point):
             new_point = shapely.ops.nearest_points(
                 landmass_boundary_union_geom, shapely_point)[0]
-            LOGGER.debug(
-                'new point: %s %s', str(new_point), str(shore_point_geometry))
             shore_point_geometry = ogr.CreateGeometryFromWkb(new_point.wkb)
 
         # Iterate over every ray direction
@@ -1130,13 +1128,10 @@ def calculate_rhab(
     tmp_working_dir = tempfile.mkdtemp(
         prefix='calculate_rhab_',
         dir=os.path.dirname(shore_point_vector_path))
-    LOGGER.debug(tmp_working_dir)
     for hab_id, (hab_raster_path, risk_val, eff_dist) in (
                 habitat_raster_path_map.items()):
         local_hab_raster_path = os.path.join(
             tmp_working_dir, '%s.tif' % str(hab_id))
-        LOGGER.debug(
-            'clip %s to %s', hab_raster_path, shore_point_info['bounding_box'])
         clip_and_reproject_raster(
             hab_raster_path, local_hab_raster_path,
             shore_point_info['projection_wkt'],
@@ -1276,7 +1271,6 @@ def clip_geometry(
     bounding_box = shapely.geometry.box(*bounding_box_coords)
 
     possible_geom_list = global_geom_strtree.query(bounding_box)
-    LOGGER.debug('possible intersections %d', len(possible_geom_list))
     if not possible_geom_list:
         layer = None
         vector = None
@@ -1332,11 +1326,9 @@ def sample_line_to_points(
         if isinstance(line, shapely.geometry.collection.GeometryCollection):
             line_list = []
             for geom in list(line):
-                LOGGER.debug(geom)
                 if isinstance(geom, (
                         shapely.geometry.linestring.LineString,
                         shapely.geometry.multilinestring.MultiLineString)):
-                    LOGGER.debug('appending')
                     line_list.append(geom)
             print('building: %s', line_list)
             line = shapely.geometry.MultiLineString(line_list)
@@ -1630,16 +1622,9 @@ def create_averaging_kernel_raster(
 
     """
     driver = gdal.GetDriverByName('GTiff')
-    LOGGER.debug(radius_in_pixels)
     kernel_raster = driver.Create(
         kernel_filepath, int(2*radius_in_pixels[0]),
         int(2*radius_in_pixels[1]), 1, gdal.GDT_Float32)
-
-    LOGGER.debug(f'kernel filepath: {kernel_filepath}')
-    LOGGER.debug(f'kernel file exists? {os.path.exists(kernel_filepath)}')
-    LOGGER.debug(
-        f'kernel dir exists? '
-        f'{os.path.exists(os.path.dirname(kernel_filepath))}')
 
     # Make some kind of geotransform, it doesn't matter what but
     # will make GIS libraries behave better if it's all defined
@@ -1663,7 +1648,6 @@ def create_averaging_kernel_raster(
     kernel_array = numpy.where(
         ((cx-jv) / radius_in_pixels[0])**2 +
         ((cy-iv) / radius_in_pixels[1])**2 <= 1.0, 1.0, 0.0)
-    LOGGER.debug(kernel_array)
 
     # normalize
     if normalize:
@@ -1840,7 +1824,6 @@ def merge_cv_points(cv_vector_queue, target_cv_vector_path):
     """
     gpkg_driver = ogr.GetDriverByName('GPKG')
     target_cv_vector = gpkg_driver.CreateDataSource(target_cv_vector_path)
-    LOGGER.debug(f'****** creating target CV vector at {target_cv_vector_path}')
     layer_name = os.path.basename(os.path.splitext(target_cv_vector_path)[0])
     wgs84_srs = osr.SpatialReference()
     wgs84_srs.ImportFromEPSG(4326)
@@ -2487,13 +2470,6 @@ def calculate_degree_cell_cv(
         cv_grid_worker_list.append(cv_grid_worker_thread)
         LOGGER.debug('starting worker %d', worker_id)
 
-    for path in [
-            local_data_path_map['lulc'],
-            local_data_path_map['global_wwiii_vector_path'],
-            local_data_path_map['landmass'],
-            local_data_path_map['shore_grid']]:
-        LOGGER.info('%s: %s' % (os.path.exists(path), path))
-
     shore_grid_vector = gdal.OpenEx(
         local_data_path_map['shore_grid'], gdal.OF_VECTOR)
     shore_grid_layer = shore_grid_vector.GetLayer()
@@ -2502,7 +2478,6 @@ def calculate_degree_cell_cv(
         shore_grid_geom = shore_grid_feature.GetGeometryRef()
         boundary_box = shapely.wkb.loads(
             bytes(shore_grid_geom.ExportToWkb()))
-        LOGGER.debug(boundary_box.bounds)
         bb_work_queue.put((index, boundary_box.bounds))
 
     shore_grid_vector = None
@@ -2538,8 +2513,6 @@ if __name__ == '__main__':
 
     LOGGER.debug('parsing args')
     args = parser.parse_args()
-    LOGGER.info(args)
-    print(args)
 
     for dir_path in [
             WORKSPACE_DIR, CHURN_DIR, ECOSHARD_DIR]:
