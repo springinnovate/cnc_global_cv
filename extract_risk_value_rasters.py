@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
         value_rasters = list(glob.glob(os.path.join(
             'global_cv_workspace', short_hash, 'value_rasters', '*.tif')))
-        zip_path = os.path.join(f'{basename}_value_rasters.zip')
+        zip_path = os.path.join(results_dir, f'{basename}_value_rasters.zip')
         with zipfile.ZipFile(zip_path, 'w') as myzip:
             for value_raster in value_rasters:
                 arcname = f'{basename}_{os.path.basename(value_raster)}'
