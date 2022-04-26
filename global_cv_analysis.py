@@ -2556,8 +2556,6 @@ if __name__ == '__main__':
             target_cv_vector_path = os.path.join(
                 local_workspace_dir, '%s.gpkg' % landcover_basename)
             habitat_raster_risk_dist_map = preprocess_habitat(landcover_hash)
-            LOGGER.debug('skipping from here to ensure everything downloaded okay')
-            continue
 
             calculate_cv_vector_task = task_graph.add_task(
                 func=calculate_degree_cell_cv,
