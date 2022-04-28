@@ -1505,7 +1505,11 @@ def clip_and_reproject_raster(
     else:
         local_bounding_box = target_bounding_box
         base_srs = osr.SpatialReference()
-        base_srs.ImportFromWkt(base_raster_info['projection_wkt'])
+        try:
+            base_srs.ImportFromWkt(base_raster_info['projection_wkt'])
+        except Exception as e:
+            LOGGER.exception(f'error on {base_raster_path}\n{base_raster_info}')
+            raise e
         target_srs = osr.SpatialReference()
         target_srs.ImportFromWkt(target_srs_wkt)
         base_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
