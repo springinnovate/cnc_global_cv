@@ -48,7 +48,9 @@ M_PER_DEGREE = 111300.0
 
 ECOSHARD_BUCKET_URL = (
     'https://storage.googleapis.com/critical-natural-capital-ecoshards/'
-    'cv_layers/')
+    'cv_layers/') 
+#some of the following datasets seem to be missing from that folder; they
+#can all be found here: gs://ecoshard-root/key_datasets/cv_layers
 
 EMPTY_RASTER_URL = (
     ECOSHARD_BUCKET_URL + 'empty_md5_f8f71e20668060bda7567ca33149a45c.tif')
