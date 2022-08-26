@@ -2000,8 +2000,8 @@ def add_cv_vector_risk(cv_risk_vector_path):
                 'Rgeomorphology', 'Rsurge', 'Rwave', 'Rwind', 'Rslr',
                 'Rrelief']:
             nohab_exposure_index *= feature.GetField(risk_field)
-        # the *5 is to get the "missing" habitat risk in there
-        nohab_exposure_index = (nohab_exposure_index*5)**(1./7.)
+        # the *4.8 is to get the "missing" habitat risk in there (4.8 comes from equation 15)
+        nohab_exposure_index = (nohab_exposure_index * 4.8)**(1./7.)
         feature.SetField('Rt_nohab_all', nohab_exposure_index)
 
         for hab_field in HAB_FIELDS:
