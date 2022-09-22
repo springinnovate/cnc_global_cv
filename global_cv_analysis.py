@@ -48,7 +48,7 @@ M_PER_DEGREE = 111300.0
 
 ECOSHARD_BUCKET_URL = (
     'https://storage.googleapis.com/critical-natural-capital-ecoshards/'
-    'cv_layers/') 
+    'cv_layers/')
 #some of the following datasets seem to be missing from that folder; they
 #can all be found here: gs://ecoshard-root/key_datasets/cv_layers
 
@@ -204,6 +204,7 @@ LULC_CODE_TO_HAB_MAP = {
     152: (4, 500),
     153: (4, 500),
     160: (1, 2000),
+    161: (1, 2000),
     170: (1, 2000),
     171: (1, 2000),
     180: (2, 1000),
